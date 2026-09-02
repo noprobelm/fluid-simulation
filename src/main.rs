@@ -1,8 +1,3 @@
-//! A compute shader that simulates Conway's Game of Life.
-//!
-//! Compute shaders use the GPU for computing arbitrary information, that may be independent of what
-//! is rendered to the screen.
-
 use bevy::{
     asset::RenderAssetUsages,
     core_pipeline::schedule::camera_driver,

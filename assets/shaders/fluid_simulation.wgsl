@@ -1,9 +1,3 @@
-// The shader reads the previous frame's state from the `input` texture, and writes the new state of
-// each pixel to the `output` texture. The textures are flipped each step to progress the
-// simulation.
-// Two textures are needed for the game of life as each pixel of step N depends on the state of its
-// neighbors at step N-1.
-
 @group(0) @binding(0) var original: texture_storage_2d<rgba32float, read>;
 
 @group(0) @binding(1) var current: texture_storage_2d<rgba32float, read>;
