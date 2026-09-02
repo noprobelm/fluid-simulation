@@ -1,11 +1,14 @@
-@group(0) @binding(0) var original: texture_storage_2d<rgba32float, read>;
+@group(0) @binding(0) var density_original: texture_storage_2d<rgba32float, read>;
 
-@group(0) @binding(1) var current: texture_storage_2d<rgba32float, read>;
+@group(0) @binding(1) var density_current: texture_storage_2d<rgba32float, read>;
 
-@group(0) @binding(2) var next: texture_storage_2d<rgba32float, write>;
+@group(0) @binding(2) var density_next: texture_storage_2d<rgba32float, write>;
 
+@group(0) @binding(3) var velocity_current: texture_storage_2d<rgba32float, read>;
 
-@group(0) @binding(3) var<uniform> config: FluidSimulationUniforms;
+@group(0) @binding(4) var velocity_next: texture_storage_2d<rgba32float, write>;
+
+@group(0) @binding(5) var<uniform> config: FluidSimulationUniforms;
 
 struct FluidSimulationUniforms {
     alive_color: vec4<f32>,
@@ -45,11 +48,11 @@ fn init(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     // Use alpha channel to keep track of cell's state
     let color = vec4(0., 0., 0., 1);
 
-    textureStore(next, location, color);
+    textureStore(density_next, location, color);
 }
 
 fn is_alive(location: vec2<i32>, offset_x: i32, offset_y: i32) -> i32 {
-    let value: vec4<f32> = textureLoad(current, location + vec2<i32>(offset_x, offset_y));
+    let value: vec4<f32> = textureLoad(density_current, location + vec2<i32>(offset_x, offset_y));
     return i32(value.a);
 }
 
@@ -89,7 +92,7 @@ fn set_bnd(location: vec2<i32>, value: vec4<f32>, b: i32) -> vec4<f32> {
 
     // Left boundary
     if (location.x == 0) {
-        let neighbor = textureLoad(current, vec2<i32>(1, location.y));
+        let neighbor = textureLoad(density_current, vec2<i32>(1, location.y));
 
         result.r = select(
             neighbor.r,
@@ -101,7 +104,7 @@ fn set_bnd(location: vec2<i32>, value: vec4<f32>, b: i32) -> vec4<f32> {
     // Right boundary
     else if (location.x == width - 1) {
         let neighbor = textureLoad(
-            current,
+            density_current,
             vec2<i32>(width - 2, location.y)
         );
 
@@ -114,7 +117,7 @@ fn set_bnd(location: vec2<i32>, value: vec4<f32>, b: i32) -> vec4<f32> {
 
     // Bottom boundary
     else if (location.y == 0) {
-        let neighbor = textureLoad(current, vec2<i32>(location.x, 1));
+        let neighbor = textureLoad(density_current, vec2<i32>(location.x, 1));
 
         result.r = select(
             neighbor.r,
@@ -126,7 +129,7 @@ fn set_bnd(location: vec2<i32>, value: vec4<f32>, b: i32) -> vec4<f32> {
     // Top boundary
     else if (location.y == height - 1) {
         let neighbor = textureLoad(
-            current,
+            density_current,
             vec2<i32>(location.x, height - 2)
         );
 
@@ -154,23 +157,28 @@ fn diffuse(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
   let height = i32(config.dimensions.y);
 
   if location.x == 0 ||
-     location.y == 0 ||
-     location.x == width - 1 ||
-     location.y == height - 1 {
-     return;
+    location.y == 0 ||
+    location.x == width - 1 ||
+    location.y == height - 1
+  {
+      textureStore(
+          density_next,
+          location,
+          textureLoad(density_current, location),
+      );
+      return;
   }
-
   let n = config.dimensions.x - 2.0;
   let a = config.time * config.diff * n * n;
 
-  var x0 = textureLoad(original, location);
+  var x0 = textureLoad(density_original, location);
 
-  let left = textureLoad(current, location + vec2<i32>(-1, 0));
-  let right = textureLoad(current, location + vec2<i32>(1, 0));
-  let below = textureLoad(current, location + vec2<i32>(0, -1));
-  let above = textureLoad(current, location + vec2<i32>(0, 1));
+  let left = textureLoad(density_current, location + vec2<i32>(-1, 0));
+  let right = textureLoad(density_current, location + vec2<i32>(1, 0));
+  let below = textureLoad(density_current, location + vec2<i32>(0, -1));
+  let above = textureLoad(density_current, location + vec2<i32>(0, 1));
 
-  var result = textureLoad(current, location);
+  var result = textureLoad(density_current, location);
 
   result.r = (
       x0.r +
@@ -182,7 +190,7 @@ fn diffuse(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
       )
   ) / (1.0 + 4.0 * a);
 
-  textureStore(next, location, result);
+  textureStore(density_next, location, result);
 }
 
 @compute @workgroup_size(8, 8, 1)
@@ -193,8 +201,9 @@ fn update(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     }
 
     let location = vec2<i32>(i32(invocation_id.x), i32(invocation_id.y));
-    var color = textureLoad(current, location);
+    var color = textureLoad(density_current, location);
     color.r += config.time * density_source_at(location);
     color = set_bnd(location, color, 0);
-    textureStore(next, location, color);
+    textureStore(density_next, location, color);
+    textureStore(velocity_next, location, color);
 }
