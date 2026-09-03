@@ -144,6 +144,57 @@ fn set_bnd(location: vec2<i32>, value: vec4<f32>, b: i32) -> vec4<f32> {
 }
 
 @compute @workgroup_size(8, 8, 1)
+fn advect(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
+  if (invocation_id.x >= u32(config.dimensions.x) ||
+        invocation_id.y >= u32(config.dimensions.y)) {
+        return;
+    }
+
+    let location = vec2<i32>(
+        i32(invocation_id.x),
+        i32(invocation_id.y)
+    );
+
+    let n = config.dimensions.x - 2.0;
+    let dt0 = config.time * n;
+
+    let velocity = textureLoad(velocity_current, location);
+
+    var x = f32(location.x) - dt0 * velocity.x;
+    var y = f32(location.y) - dt0 * velocity.y;
+
+    x = clamp(x, 0.5, n + 0.5);
+    y = clamp(y, 0.5, n + 0.5);
+
+    let i0 = i32(x);
+    let i1 = i0 + 1;
+    let j0 = i32(y);
+    let j1 = j0 + 1;
+
+    let s1 = x - f32(i0);
+    let s0 = 1.0 - s1;
+
+    let t1 = y - f32(j0);
+    let t0 = 1.0 - t1;
+
+    let d00 = textureLoad(density_current, vec2<i32>(i0, j0));
+    let d01 = textureLoad(density_current, vec2<i32>(i0, j1));
+    let d10 = textureLoad(density_current, vec2<i32>(i1, j0));
+    let d11 = textureLoad(density_current, vec2<i32>(i1, j1));
+
+    var result = textureLoad(density_current, location);
+
+    result.r =
+        s0 * (t0 * d00.r + t1 * d01.r) +
+        s1 * (t0 * d10.r + t1 * d11.r);
+
+    result = set_bnd(location, result, 0);
+
+    textureStore(density_next, location, result);
+}
+
+
+@compute @workgroup_size(8, 8, 1)
 fn diffuse(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
   // JAB TODO: Why is this check necessary
   if (invocation_id.x >= u32(config.dimensions.x) ||
@@ -193,6 +244,7 @@ fn diffuse(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
   textureStore(density_next, location, result);
 }
 
+
 @compute @workgroup_size(8, 8, 1)
 fn update(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     if (invocation_id.x >= u32(config.dimensions.x) ||
@@ -205,5 +257,4 @@ fn update(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     color.r += config.time * density_source_at(location);
     color = set_bnd(location, color, 0);
     textureStore(density_next, location, color);
-    textureStore(velocity_next, location, color);
 }

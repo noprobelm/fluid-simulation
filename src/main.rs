@@ -23,6 +23,7 @@ const SHADER_ASSET_PATH: &str = "shaders/fluid_simulation.wgsl";
 const DISPLAY_FACTOR: u32 = 4;
 const SIZE: UVec2 = UVec2::new((1280 / DISPLAY_FACTOR) + 2, (1280 / DISPLAY_FACTOR) + 2);
 const WORKGROUP_SIZE: u32 = 8;
+const DIFFUSION_ITERATIONS: usize = 20;
 
 fn main() {
     App::new()
@@ -196,6 +197,7 @@ struct FluidSimPipeline {
     init_pipeline: CachedComputePipelineId,
     update_pipeline: CachedComputePipelineId,
     diffuse_pipeline: CachedComputePipelineId,
+    advect_pipeline: CachedComputePipelineId,
 }
 
 fn init_fluid_sim_pipeline(
@@ -238,8 +240,14 @@ fn init_fluid_sim_pipeline(
     });
     let diffuse_pipeline = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
         layout: vec![texture_bind_group_layout.clone()],
-        shader,
+        shader: shader.clone(),
         entry_point: Some(Cow::from("diffuse")),
+        ..default()
+    });
+    let advect_pipeline = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
+        layout: vec![texture_bind_group_layout.clone()],
+        shader,
+        entry_point: Some(Cow::from("advect")),
         ..default()
     });
 
@@ -248,6 +256,7 @@ fn init_fluid_sim_pipeline(
         init_pipeline,
         update_pipeline,
         diffuse_pipeline,
+        advect_pipeline,
     });
 }
 
@@ -288,8 +297,12 @@ fn update(
                 pipeline_cache.get_compute_pipeline_state(pipeline.diffuse_pipeline),
                 CachedPipelineState::Ok(_)
             );
+            let advect_ready = matches!(
+                pipeline_cache.get_compute_pipeline_state(pipeline.advect_pipeline),
+                CachedPipelineState::Ok(_)
+            );
 
-            if update_ready && diffuse_ready {
+            if update_ready && diffuse_ready && advect_ready {
                 *state = FluidSimState::Update(1);
             }
         }
@@ -385,7 +398,7 @@ fn fluid_simulation(
 
                 pass.set_pipeline(diffuse_pipeline);
 
-                for i in 0..20 {
+                for i in 0..DIFFUSION_ITERATIONS {
                     let diffuse_index = (index + 1 + i) % 2;
 
                     pass.set_bind_group(0, &bind_groups.0[diffuse_index], &[]);
@@ -396,6 +409,27 @@ fn fluid_simulation(
                         1,
                     );
                 }
+            }
+
+            let advect_pipeline = pipeline_cache
+                .get_compute_pipeline(pipeline.advect_pipeline)
+                .unwrap();
+
+            {
+                let mut pass = render_context
+                    .command_encoder()
+                    .begin_compute_pass(&ComputePassDescriptor::default());
+
+                pass.set_pipeline(advect_pipeline);
+
+                let advect_index = (index + 1 + DIFFUSION_ITERATIONS) % 2;
+                pass.set_bind_group(0, &bind_groups.0[advect_index], &[]);
+
+                pass.dispatch_workgroups(
+                    SIZE.x.div_ceil(WORKGROUP_SIZE),
+                    SIZE.y.div_ceil(WORKGROUP_SIZE),
+                    1,
+                );
             }
         }
     }
