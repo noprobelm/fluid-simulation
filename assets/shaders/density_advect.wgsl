@@ -1,9 +1,12 @@
 struct FluidSimulationUniforms {
     alive_color: vec4<f32>,
     cursor_position: vec2<f32>,
+    cursor_velocity: vec2<f32>,
     cursor_density: f32,
     time: f32,
     diff: f32,
+    density_source_active: u32,
+    velocity_source_active: u32,
     dimensions: vec2<f32>,
 };
 

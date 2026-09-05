@@ -18,7 +18,7 @@ use bevy::{
 use std::borrow::Cow;
 
 const INIT_SHADER: &str = "shaders/init.wgsl";
-const DENSITY_UPDATE_SHADER: &str = "shaders/density_update.wgsl";
+const ADD_SOURCES_SHADER: &str = "shaders/add_sources.wgsl";
 const DENSITY_DIFFUSE_SHADER: &str = "shaders/density_diffuse.wgsl";
 const DENSITY_ADVECT_SHADER: &str = "shaders/density_advect.wgsl";
 const COMPUTE_DIVERGENCE_SHADER: &str = "shaders/divergence.wgsl";
@@ -48,7 +48,7 @@ fn main() {
         ))
         .add_systems(Startup, setup)
         .add_systems(Update, switch_textures)
-        .add_systems(Update, (update_cursor_position, update_shader_time))
+        .add_systems(Update, (update_cursor_input, update_shader_time))
         .run();
 }
 
@@ -101,9 +101,12 @@ fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     commands.insert_resource(FluidSimUniforms {
         alive_color: LinearRgba::RED,
         cursor_position: Vec2::ZERO,
+        cursor_velocity: Vec2::ZERO,
         cursor_density: 10.0,
         time: 0.0,
         diff: 0.0001,
+        density_source_active: 0,
+        velocity_source_active: 0,
         dimensions: SIZE.as_vec2(),
     });
 
@@ -198,9 +201,12 @@ struct FluidSimImages {
 struct FluidSimUniforms {
     alive_color: LinearRgba,
     cursor_position: Vec2,
+    cursor_velocity: Vec2,
     cursor_density: f32,
     time: f32,
     diff: f32,
+    density_source_active: u32,
+    velocity_source_active: u32,
     dimensions: Vec2,
 }
 
@@ -208,8 +214,8 @@ struct FluidSimUniforms {
 struct FluidSimBindGroups {
     init: BindGroup,
 
-    // [density ping-pong state]
-    density_update: [BindGroup; 2],
+    // [density ping-pong state][velocity ping-pong state]
+    add_sources: [[BindGroup; 2]; 2],
     density_diffuse: [BindGroup; 2],
 
     // [density ping-pong state][velocity ping-pong state]
@@ -250,8 +256,8 @@ fn prepare_bind_groups(
     uniform_buffer.write_buffer(&render_device, &queue);
 
     let init_layout = pipeline_cache.get_bind_group_layout(&pipeline.init_bind_group_layout);
-    let density_update_layout =
-        pipeline_cache.get_bind_group_layout(&pipeline.density_update_bind_group_layout);
+    let add_sources_layout =
+        pipeline_cache.get_bind_group_layout(&pipeline.add_sources_bind_group_layout);
     let density_diffuse_layout =
         pipeline_cache.get_bind_group_layout(&pipeline.density_diffuse_bind_group_layout);
     let density_advect_layout =
@@ -281,27 +287,56 @@ fn prepare_bind_groups(
         )),
     );
 
-    // density_update[0] = A -> B
-    // density_update[1] = B -> A
-    let density_update = [
-        render_device.create_bind_group(
-            Some("density update A -> B"),
-            &density_update_layout,
-            &BindGroupEntries::sequential((
-                &density_a.texture_view,
-                &density_b.texture_view,
-                &uniform_buffer,
-            )),
-        ),
-        render_device.create_bind_group(
-            Some("density update B -> A"),
-            &density_update_layout,
-            &BindGroupEntries::sequential((
-                &density_b.texture_view,
-                &density_a.texture_view,
-                &uniform_buffer,
-            )),
-        ),
+    // add_sources[density][velocity]: each field's current texture -> its other texture
+    let add_sources = [
+        [
+            render_device.create_bind_group(
+                Some("add sources DA VA -> DB VB"),
+                &add_sources_layout,
+                &BindGroupEntries::sequential((
+                    &density_a.texture_view,
+                    &velocity_a.texture_view,
+                    &density_b.texture_view,
+                    &velocity_b.texture_view,
+                    &uniform_buffer,
+                )),
+            ),
+            render_device.create_bind_group(
+                Some("add sources DA VB -> DB VA"),
+                &add_sources_layout,
+                &BindGroupEntries::sequential((
+                    &density_a.texture_view,
+                    &velocity_b.texture_view,
+                    &density_b.texture_view,
+                    &velocity_a.texture_view,
+                    &uniform_buffer,
+                )),
+            ),
+        ],
+        [
+            render_device.create_bind_group(
+                Some("add sources DB VA -> DA VB"),
+                &add_sources_layout,
+                &BindGroupEntries::sequential((
+                    &density_b.texture_view,
+                    &velocity_a.texture_view,
+                    &density_a.texture_view,
+                    &velocity_b.texture_view,
+                    &uniform_buffer,
+                )),
+            ),
+            render_device.create_bind_group(
+                Some("add sources DB VB -> DA VA"),
+                &add_sources_layout,
+                &BindGroupEntries::sequential((
+                    &density_b.texture_view,
+                    &velocity_b.texture_view,
+                    &density_a.texture_view,
+                    &velocity_a.texture_view,
+                    &uniform_buffer,
+                )),
+            ),
+        ],
     ];
 
     // density_diffuse[0] = source + A -> B
@@ -474,7 +509,7 @@ fn prepare_bind_groups(
 
     commands.insert_resource(FluidSimBindGroups {
         init,
-        density_update,
+        add_sources,
         density_diffuse,
         density_advect,
         compute_divergence,
@@ -486,7 +521,7 @@ fn prepare_bind_groups(
 #[derive(Resource)]
 struct FluidSimPipeline {
     init_bind_group_layout: BindGroupLayoutDescriptor,
-    density_update_bind_group_layout: BindGroupLayoutDescriptor,
+    add_sources_bind_group_layout: BindGroupLayoutDescriptor,
     density_diffuse_bind_group_layout: BindGroupLayoutDescriptor,
     density_advect_bind_group_layout: BindGroupLayoutDescriptor,
     compute_divergence_bind_group_layout: BindGroupLayoutDescriptor,
@@ -494,7 +529,7 @@ struct FluidSimPipeline {
     velocity_project_bind_group_layout: BindGroupLayoutDescriptor,
 
     init_pipeline: CachedComputePipelineId,
-    density_update_pipeline: CachedComputePipelineId,
+    add_sources_pipeline: CachedComputePipelineId,
     density_diffuse_pipeline: CachedComputePipelineId,
     density_advect_pipeline: CachedComputePipelineId,
     compute_divergence_pipeline: CachedComputePipelineId,
@@ -521,13 +556,15 @@ fn init_fluid_sim_pipeline(
         ),
     );
 
-    let density_update_bind_group_layout = BindGroupLayoutDescriptor::new(
-        "density update layout",
+    let add_sources_bind_group_layout = BindGroupLayoutDescriptor::new(
+        "add sources layout",
         &BindGroupLayoutEntries::sequential(
             ShaderStages::COMPUTE,
             (
                 texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::ReadOnly),
+                texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::ReadOnly),
                 texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::WriteOnly),
+                texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::WriteOnly),
                 uniform_buffer::<FluidSimUniforms>(false),
             ),
         ),
@@ -598,7 +635,7 @@ fn init_fluid_sim_pipeline(
     );
 
     let init_shader = asset_server.load(INIT_SHADER);
-    let density_update_shader = asset_server.load(DENSITY_UPDATE_SHADER);
+    let add_sources_shader = asset_server.load(ADD_SOURCES_SHADER);
     let density_diffuse_shader = asset_server.load(DENSITY_DIFFUSE_SHADER);
     let density_advect_shader = asset_server.load(DENSITY_ADVECT_SHADER);
     let compute_divergence_shader = asset_server.load(COMPUTE_DIVERGENCE_SHADER);
@@ -612,13 +649,12 @@ fn init_fluid_sim_pipeline(
         ..default()
     });
 
-    let density_update_pipeline =
-        pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
-            layout: vec![density_update_bind_group_layout.clone()],
-            shader: density_update_shader,
-            entry_point: Some(Cow::Borrowed("main")),
-            ..default()
-        });
+    let add_sources_pipeline = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
+        layout: vec![add_sources_bind_group_layout.clone()],
+        shader: add_sources_shader,
+        entry_point: Some(Cow::Borrowed("main")),
+        ..default()
+    });
 
     let density_diffuse_pipeline =
         pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
@@ -662,14 +698,14 @@ fn init_fluid_sim_pipeline(
 
     commands.insert_resource(FluidSimPipeline {
         init_bind_group_layout,
-        density_update_bind_group_layout,
+        add_sources_bind_group_layout,
         density_diffuse_bind_group_layout,
         density_advect_bind_group_layout,
         compute_divergence_bind_group_layout,
         pressure_solve_bind_group_layout,
         velocity_project_bind_group_layout,
         init_pipeline,
-        density_update_pipeline,
+        add_sources_pipeline,
         density_diffuse_pipeline,
         density_advect_pipeline,
         compute_divergence_pipeline,
@@ -712,7 +748,7 @@ fn update_pipeline_state(
             }
         }
         FluidSimState::Init => {
-            if pipeline_ready(&pipeline_cache, pipeline.density_update_pipeline)
+            if pipeline_ready(&pipeline_cache, pipeline.add_sources_pipeline)
                 && pipeline_ready(&pipeline_cache, pipeline.density_diffuse_pipeline)
                 && pipeline_ready(&pipeline_cache, pipeline.density_advect_pipeline)
                 && pipeline_ready(&pipeline_cache, pipeline.compute_divergence_pipeline)
@@ -757,21 +793,26 @@ fn fluid_simulation(
 
         FluidSimState::Update => {
             // ------------------------------------------------------------
-            // 1. Add density source: current density -> other density
+            // 1. Add input sources and advance both ping-pong fields.
             // ------------------------------------------------------------
             {
-                let update_pipeline = pipeline_cache
-                    .get_compute_pipeline(pipeline.density_update_pipeline)
+                let add_sources_pipeline = pipeline_cache
+                    .get_compute_pipeline(pipeline.add_sources_pipeline)
                     .unwrap();
 
                 let density_index = buffers.density.index();
+                let velocity_index = buffers.velocity.index();
 
                 let mut pass = render_context
                     .command_encoder()
                     .begin_compute_pass(&ComputePassDescriptor::default());
 
-                pass.set_pipeline(update_pipeline);
-                pass.set_bind_group(0, &bind_groups.density_update[density_index], &[]);
+                pass.set_pipeline(add_sources_pipeline);
+                pass.set_bind_group(
+                    0,
+                    &bind_groups.add_sources[density_index][velocity_index],
+                    &[],
+                );
                 pass.dispatch_workgroups(
                     SIZE.x.div_ceil(WORKGROUP_SIZE),
                     SIZE.y.div_ceil(WORKGROUP_SIZE),
@@ -779,6 +820,7 @@ fn fluid_simulation(
                 );
             }
             buffers.density.swap();
+            buffers.velocity.swap();
 
             // ------------------------------------------------------------
             // 2. Copy the updated density into the fixed diffusion source x0
@@ -936,9 +978,12 @@ fn fluid_simulation(
     }
 }
 
-fn update_cursor_position(
+fn update_cursor_input(
     windows: Query<&Window>,
+    mouse_buttons: Res<ButtonInput<MouseButton>>,
+    time: Res<Time>,
     mut uniforms: ResMut<FluidSimUniforms>,
+    mut previous_cursor_position: Local<Option<Vec2>>,
 ) -> Result {
     let window = windows.single()?;
 
@@ -947,8 +992,22 @@ fn update_cursor_position(
         let texture_origin = (window.size() - texture_size) * 0.5;
         let relative = (cursor_position - texture_origin) / texture_size;
 
-        uniforms.cursor_position = relative.clamp(Vec2::ZERO, Vec2::ONE);
+        let cursor_position = relative.clamp(Vec2::ZERO, Vec2::ONE);
+        let delta_seconds = time.delta().as_secs_f32();
+        uniforms.cursor_velocity = previous_cursor_position
+            .filter(|_| delta_seconds > 0.0)
+            .map_or(Vec2::ZERO, |previous| {
+                (cursor_position - previous) / delta_seconds
+            });
+        uniforms.cursor_position = cursor_position;
+        *previous_cursor_position = Some(cursor_position);
+    } else {
+        uniforms.cursor_velocity = Vec2::ZERO;
+        *previous_cursor_position = None;
     }
+
+    uniforms.density_source_active = u32::from(mouse_buttons.pressed(MouseButton::Left));
+    uniforms.velocity_source_active = u32::from(mouse_buttons.pressed(MouseButton::Right));
 
     Ok(())
 }
