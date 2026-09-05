@@ -26,7 +26,7 @@ const PRESSURE_SOLVE_SHADER: &str = "shaders/pressure_solve.wgsl";
 const VELOCITY_PROJECT_SHADER: &str = "shaders/velocity_project.wgsl";
 
 const DISPLAY_FACTOR: u32 = 4;
-const SIZE: UVec2 = UVec2::new((2560 / DISPLAY_FACTOR) + 2, (1440 / DISPLAY_FACTOR) + 2);
+const SIZE: UVec2 = UVec2::new((1440 / DISPLAY_FACTOR) + 2, (1440 / DISPLAY_FACTOR) + 2);
 const WORKGROUP_SIZE: u32 = 8;
 const DIFFUSION_ITERATIONS: usize = 20;
 const PRESSURE_SOLVE_ITERATIONS: usize = 20;
@@ -105,7 +105,7 @@ fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
         cursor_velocity: Vec2::ZERO,
         cursor_density: 10.0,
         time: 0.0,
-        diff: 0.00001,
+        diff: 0.00005,
         density_source_active: 0,
         velocity_source_active: 0,
         dimensions: SIZE.as_vec2(),
