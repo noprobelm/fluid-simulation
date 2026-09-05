@@ -159,6 +159,35 @@ fn advect(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
     textureStore(density_next, location, result);
 }
 
+@compute @workgroup_size(8, 8, 1)
+fn divergence(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
+  // int N - The size
+  // float * u - The x velocity component array
+  // float * v - The y vleocity component array
+  // float * p - The previous x velocity component (viscosity?)
+  // float * div - The previous y velocity component?
+
+  if (invocation_id.x >= u32(config.dimensions.x) ||
+      invocation_id.y >= u32(config.dimensions.y)) {
+      return;
+  }
+
+  let location = vec2<i32>(i32(invocation_id.x), i32(invocation_id.y));
+
+  let width = i32(config.dimensions.x);
+  let height = i32(config.dimensions.y);
+
+  if location.x == 0 ||
+    location.y == 0 ||
+    location.x == width - 1 ||
+    location.y == height - 1
+  {
+    // JAB TODO: Need to store some value in the texture here
+      return;
+  }
+
+}
+
 
 @compute @workgroup_size(8, 8, 1)
 fn diffuse(@builtin(global_invocation_id) invocation_id: vec3<u32>) {
