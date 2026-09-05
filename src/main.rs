@@ -50,12 +50,6 @@ fn main() {
 
 fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     let mut density = Image::new_target_texture(SIZE.x, SIZE.y, TextureFormat::R32Float, None);
-    let mut image = Image::new_target_texture(SIZE.x, SIZE.y, TextureFormat::Rgba32Float, None);
-    image.asset_usage = RenderAssetUsages::RENDER_WORLD;
-    image.texture_descriptor.usage = TextureUsages::COPY_SRC
-        | TextureUsages::COPY_DST
-        | TextureUsages::STORAGE_BINDING
-        | TextureUsages::TEXTURE_BINDING;
     density.texture_descriptor.usage = TextureUsages::COPY_SRC
         | TextureUsages::COPY_DST
         | TextureUsages::STORAGE_BINDING
@@ -64,23 +58,19 @@ fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     let density_current = images.add(density.clone());
     let density_next = images.add(density.clone());
 
-    let velocity_current = images.add(image.clone());
-    let velocity_next = images.add(image);
-
-    commands.spawn((
-        Sprite {
-            image: density_next.clone(),
-            custom_size: Some(SIZE.as_vec2()),
-            ..default()
-        },
-        Transform::from_scale(Vec3::splat(DISPLAY_FACTOR as f32)),
-    ));
-    commands.spawn(Camera2d);
+    let mut velocity = Image::new_target_texture(SIZE.x, SIZE.y, TextureFormat::Rg32Float, None);
+    velocity.asset_usage = RenderAssetUsages::RENDER_WORLD;
+    velocity.texture_descriptor.usage = TextureUsages::COPY_SRC
+        | TextureUsages::COPY_DST
+        | TextureUsages::STORAGE_BINDING
+        | TextureUsages::TEXTURE_BINDING;
+    let velocity_current = images.add(velocity.clone());
+    let velocity_next = images.add(velocity);
 
     commands.insert_resource(FluidSimImages {
         density_original,
         density_current,
-        density_next,
+        density_next: density_next.clone(),
         velocity_current,
         velocity_next,
     });
@@ -93,6 +83,17 @@ fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
         diff: 0.0001,
         dimensions: SIZE.as_vec2(),
     });
+
+    // JAB TODO: Replace this with some other texture that is influenced by the current density state
+    commands.spawn((
+        Sprite {
+            image: density_next,
+            custom_size: Some(SIZE.as_vec2()),
+            ..default()
+        },
+        Transform::from_scale(Vec3::splat(DISPLAY_FACTOR as f32)),
+    ));
+    commands.spawn(Camera2d);
 }
 
 // Switch texture to display every frame to show the one that was written to most recently.
@@ -116,6 +117,7 @@ impl Plugin for FluidSimComputePlugin {
         ));
         let render_app = app.sub_app_mut(RenderApp);
         render_app
+            .init_resource::<FluidSimBuffers>()
             .init_resource::<FluidSimState>()
             .add_systems(RenderStartup, init_fluid_sim_pipeline)
             .add_systems(
@@ -127,8 +129,9 @@ impl Plugin for FluidSimComputePlugin {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 enum PingPong {
+    #[default]
     A,
     B,
 }
@@ -149,7 +152,7 @@ impl PingPong {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Resource, Default)]
 struct FluidSimBuffers {
     density: PingPong,
     velocity: PingPong,
@@ -251,9 +254,9 @@ fn init_fluid_sim_pipeline(
                 // @binding(2): density_next
                 texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::WriteOnly),
                 // @binding(3): velocity_current
-                texture_storage_2d(TextureFormat::Rgba32Float, StorageTextureAccess::ReadOnly),
+                texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::ReadOnly),
                 // @binding(4): velocity_next
-                texture_storage_2d(TextureFormat::Rgba32Float, StorageTextureAccess::WriteOnly),
+                texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::WriteOnly),
                 // @binding(5): config
                 uniform_buffer::<FluidSimUniforms>(false),
             ),
@@ -299,13 +302,14 @@ enum FluidSimState {
     #[default]
     Loading,
     Init,
-    Update(usize),
+    Update,
 }
 
 fn update(
     pipeline: Res<FluidSimPipeline>,
     pipeline_cache: Res<PipelineCache>,
     mut state: ResMut<FluidSimState>,
+    mut buffers: ResMut<FluidSimBuffers>,
 ) {
     // if the corresponding pipeline has loaded, transition to the next stage
     match *state {
@@ -337,16 +341,14 @@ fn update(
             );
 
             if update_ready && diffuse_ready && advect_ready {
-                *state = FluidSimState::Update(1);
+                *state = FluidSimState::Update;
             }
         }
-        FluidSimState::Update(0) => {
-            *state = FluidSimState::Update(1);
+        FluidSimState::Update => {
+            buffers.density.swap();
+            buffers.velocity.swap();
+            buffers.pressure.swap();
         }
-        FluidSimState::Update(1) => {
-            *state = FluidSimState::Update(0);
-        }
-        FluidSimState::Update(_) => unreachable!(),
     }
 }
 
@@ -358,6 +360,7 @@ fn fluid_simulation(
     state: Res<FluidSimState>,
     gpu_images: Res<RenderAssets<GpuImage>>,
     fluid_sim_images: Res<FluidSimImages>,
+    buffers: Res<FluidSimBuffers>,
 ) {
     match *state {
         FluidSimState::Loading => {}
@@ -381,7 +384,7 @@ fn fluid_simulation(
             );
         }
 
-        FluidSimState::Update(index) => {
+        FluidSimState::Update => {
             let update_pipeline = pipeline_cache
                 .get_compute_pipeline(pipeline.update_pipeline)
                 .unwrap();
@@ -392,7 +395,7 @@ fn fluid_simulation(
                     .begin_compute_pass(&ComputePassDescriptor::default());
 
                 pass.set_pipeline(update_pipeline);
-                pass.set_bind_group(0, &bind_groups.0[index], &[]);
+                pass.set_bind_group(0, &bind_groups.0[buffers.density.index()], &[]);
 
                 pass.dispatch_workgroups(
                     SIZE.x.div_ceil(WORKGROUP_SIZE),
@@ -401,7 +404,7 @@ fn fluid_simulation(
                 );
             }
 
-            let updated_density_handle = if index == 0 {
+            let updated_density_handle = if buffers.density.index() == 0 {
                 &fluid_sim_images.density_next
             } else {
                 &fluid_sim_images.density_current
@@ -433,7 +436,7 @@ fn fluid_simulation(
                 pass.set_pipeline(diffuse_pipeline);
 
                 for i in 0..DIFFUSION_ITERATIONS {
-                    let diffuse_index = (index + 1 + i) % 2;
+                    let diffuse_index = (buffers.density.index() + 1 + i) % 2;
 
                     pass.set_bind_group(0, &bind_groups.0[diffuse_index], &[]);
 
@@ -456,7 +459,7 @@ fn fluid_simulation(
 
                 pass.set_pipeline(advect_pipeline);
 
-                let advect_index = (index + 1 + DIFFUSION_ITERATIONS) % 2;
+                let advect_index = (buffers.density.index() + 1 + DIFFUSION_ITERATIONS) % 2;
                 pass.set_bind_group(0, &bind_groups.0[advect_index], &[]);
 
                 pass.dispatch_workgroups(

@@ -4,9 +4,9 @@
 
 @group(0) @binding(2) var density_next: texture_storage_2d<r32float, write>;
 
-@group(0) @binding(3) var velocity_current: texture_storage_2d<rgba32float, read>;
+@group(0) @binding(3) var velocity_current: texture_storage_2d<rg32float, read>;
 
-@group(0) @binding(4) var velocity_next: texture_storage_2d<rgba32float, write>;
+@group(0) @binding(4) var velocity_next: texture_storage_2d<rg32float, write>;
 
 @group(0) @binding(5) var<uniform> config: FluidSimulationUniforms;
 
