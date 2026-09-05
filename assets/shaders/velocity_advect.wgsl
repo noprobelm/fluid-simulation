@@ -12,26 +12,15 @@ struct FluidSimulationUniforms {
 };
 
 @group(0) @binding(0)
-var density_in: texture_storage_2d<r32float, read>;
-
-@group(0) @binding(1)
 var velocity_in: texture_storage_2d<rg32float, read>;
 
-@group(0) @binding(2)
-var density_out: texture_storage_2d<r32float, write>;
+@group(0) @binding(1)
+var velocity_out: texture_storage_2d<rg32float, write>;
 
-@group(0) @binding(3)
+@group(0) @binding(2)
 var<uniform> config: FluidSimulationUniforms;
 
-fn density_at(p: vec2<i32>) -> f32 {
-    return textureLoad(density_in, p).r;
-}
-
-fn velocity_at(p: vec2<i32>) -> vec2<f32> {
-    return textureLoad(velocity_in, p).rg;
-}
-
-fn advected_density_at(p: vec2<i32>) -> f32 {
+fn advected_velocity_at(p: vec2<i32>) -> vec2<f32> {
     let n = max(config.dimensions.x - 2.0, 1.0);
 
     let velocity = velocity_at(p);
@@ -44,24 +33,26 @@ fn advected_density_at(p: vec2<i32>) -> f32 {
 
     let i0 = i32(floor(x));
     let i1 = i0 + 1;
-
     let j0 = i32(floor(y));
     let j1 = j0 + 1;
 
     let s1 = x - f32(i0);
     let s0 = 1.0 - s1;
-
     let t1 = y - f32(j0);
     let t0 = 1.0 - t1;
 
-    let d00 = density_at(vec2<i32>(i0, j0));
-    let d01 = density_at(vec2<i32>(i0, j1));
-    let d10 = density_at(vec2<i32>(i1, j0));
-    let d11 = density_at(vec2<i32>(i1, j1));
+    let v00 = velocity_at(vec2<i32>(i0, j0));
+    let v01 = velocity_at(vec2<i32>(i0, j1));
+    let v10 = velocity_at(vec2<i32>(i1, j0));
+    let v11 = velocity_at(vec2<i32>(i1, j1));
 
     return
-          s0 * (t0 * d00 + t1 * d01)
-        + s1 * (t0 * d10 + t1 * d11);
+          s0 * (t0 * v00 + t1 * v01)
+        + s1 * (t0 * v10 + t1 * v11);
+}
+
+fn velocity_at(p: vec2<i32>) -> vec2<f32> {
+    return textureLoad(velocity_in, p).rg;
 }
 
 @compute
@@ -79,19 +70,28 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let width = i32(config.dimensions.x);
     let height = i32(config.dimensions.y);
 
+    let is_left = p.x == 0;
+    let is_right = p.x == width - 1;
+    let is_bottom = p.y == 0;
+    let is_top = p.y == height - 1;
+
     let is_boundary =
-        p.x == 0 ||
-        p.x == width - 1 ||
-        p.y == 0 ||
-        p.y == height - 1;
+        is_left ||
+        is_right ||
+        is_bottom ||
+        is_top;
+
+    // ------------------------------------------------------------
+    // Interior
+    // ------------------------------------------------------------
 
     if (!is_boundary) {
-        let density = advected_density_at(p);
+        let v = advected_velocity_at(p);
 
         textureStore(
-            density_out,
+            velocity_out,
             p,
-            vec4<f32>(density, 0.0, 0.0, 0.0),
+            vec4<f32>(v.x, v.y, 0.0, 0.0),
         );
 
         return;
@@ -102,13 +102,21 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         clamp(p.y, 1, height - 2),
     );
 
-    let density = advected_density_at(interior_p);
+    var v = advected_velocity_at(interior_p);
+
+    // At vertical walls, reverse the x component.
+    if (is_left || is_right) {
+        v.x = -v.x;
+    }
+
+    // At horizontal walls, reverse the y component.
+    if (is_bottom || is_top) {
+        v.y = -v.y;
+    }
 
     textureStore(
-        density_out,
+        velocity_out,
         p,
-        vec4<f32>(density, 0.0, 0.0, 0.0),
+        vec4<f32>(v.x, v.y, 0.0, 0.0),
     );
 }
-
-

@@ -5,6 +5,7 @@ struct FluidSimulationUniforms {
     cursor_density: f32,
     time: f32,
     diff: f32,
+    visc: f32,
     density_source_active: u32,
     velocity_source_active: u32,
     dimensions: vec2<f32>,
@@ -36,18 +37,13 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let height = i32(config.dimensions.y);
 
 
-    // Set boundary values to 0
+    // Ignore if we're on a boundary
     if (
         p.x == 0 ||
         p.x == width - 1 ||
         p.y == 0 ||
         p.y == height - 1
     ) {
-        textureStore(
-            divergence,
-            p,
-            vec4<f32>(0.0, 0.0, 0.0, 0.0),
-        );
         return;
     }
 

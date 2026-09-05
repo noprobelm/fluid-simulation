@@ -5,6 +5,7 @@ struct FluidSimulationUniforms {
     cursor_density: f32,
     time: f32,
     diff: f32,
+    visc: f32,
     density_source_active: u32,
     velocity_source_active: u32,
     dimensions: vec2<f32>,
@@ -30,6 +31,17 @@ fn pressure_at(p: vec2<i32>) -> f32 {
     return textureLoad(pressure_in, p).r;
 }
 
+fn solve_pressure_at(p: vec2<i32>) -> f32 {
+    let div = divergence_at(p);
+
+    let left  = pressure_at(p + vec2<i32>(-1,  0));
+    let right = pressure_at(p + vec2<i32>( 1,  0));
+    let down  = pressure_at(p + vec2<i32>( 0, -1));
+    let up    = pressure_at(p + vec2<i32>( 0,  1));
+
+    return (div + left + right + down + up) / 4.0;
+}
+
 @compute
 @workgroup_size(8, 8, 1)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -44,25 +56,31 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let width = i32(config.dimensions.x);
     let height = i32(config.dimensions.y);
 
-    // Handle boundary conditiosn in a separate pass
-    if (
+    let is_boundary =
         p.x == 0 ||
         p.x == width - 1 ||
         p.y == 0 ||
-        p.y == height - 1
-    ) {
+        p.y == height - 1;
+
+    if (is_boundary) {
+        let interior_p = vec2<i32>(
+            clamp(p.x, 1, width - 2),
+            clamp(p.y, 1, height - 2),
+        );
+
+        // Equivalent to applying set_bnd(b = 0) from Stam's paper
+        let value = solve_pressure_at(interior_p);
+
+        textureStore(
+            pressure_out,
+            p,
+            vec4<f32>(value, 0.0, 0.0, 0.0),
+        );
+
         return;
     }
 
-    let div = divergence_at(p);
-
-    let left  = pressure_at(p + vec2<i32>(-1, 0));
-    let right = pressure_at(p + vec2<i32>( 1, 0));
-    let down  = pressure_at(p + vec2<i32>( 0,-1));
-    let up    = pressure_at(p + vec2<i32>( 0, 1));
-
-    let pressure =
-        (div + left + right + down + up) / 4.0;
+    let pressure = solve_pressure_at(p);
 
     textureStore(
         pressure_out,

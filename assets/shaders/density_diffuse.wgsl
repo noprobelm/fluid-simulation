@@ -5,6 +5,7 @@ struct FluidSimulationUniforms {
     cursor_density: f32,
     time: f32,
     diff: f32,
+    visc: f32,
     density_source_active: u32,
     velocity_source_active: u32,
     dimensions: vec2<f32>,
@@ -26,6 +27,26 @@ fn density_at(p: vec2<i32>) -> f32 {
     return textureLoad(density_in, p).r;
 }
 
+fn source_at(p: vec2<i32>) -> f32 {
+    return textureLoad(density_original, p).r;
+}
+
+fn diffuse_density_at(p: vec2<i32>) -> f32 {
+    let n = max(config.dimensions.x - 2.0, 1.0);
+    let a = config.time * config.diff * n * n;
+
+    let source = source_at(p);
+
+    let left  = density_at(p + vec2<i32>(-1,  0));
+    let right = density_at(p + vec2<i32>( 1,  0));
+    let down  = density_at(p + vec2<i32>( 0, -1));
+    let up    = density_at(p + vec2<i32>( 0,  1));
+
+    return (
+        source +
+        a * (left + right + down + up)
+    ) / (1.0 + 4.0 * a);
+}
 @compute
 @workgroup_size(8, 8, 1)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {

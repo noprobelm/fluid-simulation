@@ -5,6 +5,7 @@ struct FluidSimulationUniforms {
     cursor_density: f32,
     time: f32,
     diff: f32,
+    visc: f32,
     density_source_active: u32,
     velocity_source_active: u32,
     dimensions: vec2<f32>,
