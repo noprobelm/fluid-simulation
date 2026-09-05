@@ -10,6 +10,7 @@ struct FluidSimulationUniforms {
     dimensions: vec2<f32>,
 };
 
+
 @group(0) @binding(0)
 var density_a: texture_storage_2d<r32float, write>;
 
@@ -39,3 +40,5 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     textureStore(velocity_a, p, vec4<f32>(0.0));
     textureStore(velocity_b, p, vec4<f32>(0.0));
 }
+
+

@@ -26,7 +26,7 @@ const PRESSURE_SOLVE_SHADER: &str = "shaders/pressure_solve.wgsl";
 const VELOCITY_PROJECT_SHADER: &str = "shaders/velocity_project.wgsl";
 
 const DISPLAY_FACTOR: u32 = 4;
-const SIZE: UVec2 = UVec2::new((1280 / DISPLAY_FACTOR) + 2, (1280 / DISPLAY_FACTOR) + 2);
+const SIZE: UVec2 = UVec2::new((2560 / DISPLAY_FACTOR) + 2, (1440 / DISPLAY_FACTOR) + 2);
 const WORKGROUP_SIZE: u32 = 8;
 const DIFFUSION_ITERATIONS: usize = 20;
 const PRESSURE_SOLVE_ITERATIONS: usize = 20;
@@ -105,7 +105,7 @@ fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
         cursor_velocity: Vec2::ZERO,
         cursor_density: 10.0,
         time: 0.0,
-        diff: 0.0001,
+        diff: 0.00001,
         density_source_active: 0,
         velocity_source_active: 0,
         dimensions: SIZE.as_vec2(),
@@ -925,59 +925,59 @@ fn fluid_simulation(
                 );
             }
 
-            // // ------------------------------------------------------------
-            // // 4. Solve for pressure
-            // // ------------------------------------------------------------
-            // {
-            //     let pressure_pipeline = pipeline_cache
-            //         .get_compute_pipeline(pipeline.pressure_solve_pipeline)
-            //         .unwrap();
-            //
-            //     let mut pass = render_context
-            //         .command_encoder()
-            //         .begin_compute_pass(&ComputePassDescriptor::default());
-            //     pass.set_pipeline(pressure_pipeline);
-            //
-            //     for _ in 0..PRESSURE_SOLVE_ITERATIONS {
-            //         let pressure_index = buffers.pressure.index();
-            //         pass.set_bind_group(0, &bind_groups.pressure_solve[pressure_index], &[]);
-            //         pass.dispatch_workgroups(
-            //             SIZE.x.div_ceil(WORKGROUP_SIZE),
-            //             SIZE.y.div_ceil(WORKGROUP_SIZE),
-            //             1,
-            //         );
-            //         buffers.pressure.swap();
-            //     }
-            // }
-            //
-            // // ------------------------------------------------------------
-            // // 4. Proejct velocity
-            // // ------------------------------------------------------------
-            // {
-            //     let velocity_pipeline = pipeline_cache
-            //         .get_compute_pipeline(pipeline.velocity_project_pipeline)
-            //         .unwrap();
-            //
-            //     let pressure_index = buffers.pressure.index();
-            //     let velocity_index = buffers.velocity.index();
-            //
-            //     let mut pass = render_context
-            //         .command_encoder()
-            //         .begin_compute_pass(&ComputePassDescriptor::default());
-            //
-            //     pass.set_pipeline(velocity_pipeline);
-            //     pass.set_bind_group(
-            //         0,
-            //         &bind_groups.velocity_project[pressure_index][velocity_index],
-            //         &[],
-            //     );
-            //     pass.dispatch_workgroups(
-            //         SIZE.x.div_ceil(WORKGROUP_SIZE),
-            //         SIZE.y.div_ceil(WORKGROUP_SIZE),
-            //         1,
-            //     );
-            // }
-            // buffers.velocity.swap();
+            // ------------------------------------------------------------
+            // 4. Solve for pressure
+            // ------------------------------------------------------------
+            {
+                let pressure_pipeline = pipeline_cache
+                    .get_compute_pipeline(pipeline.pressure_solve_pipeline)
+                    .unwrap();
+
+                let mut pass = render_context
+                    .command_encoder()
+                    .begin_compute_pass(&ComputePassDescriptor::default());
+                pass.set_pipeline(pressure_pipeline);
+
+                for _ in 0..PRESSURE_SOLVE_ITERATIONS {
+                    let pressure_index = buffers.pressure.index();
+                    pass.set_bind_group(0, &bind_groups.pressure_solve[pressure_index], &[]);
+                    pass.dispatch_workgroups(
+                        SIZE.x.div_ceil(WORKGROUP_SIZE),
+                        SIZE.y.div_ceil(WORKGROUP_SIZE),
+                        1,
+                    );
+                    buffers.pressure.swap();
+                }
+            }
+
+            // ------------------------------------------------------------
+            // 4. Project velocity
+            // ------------------------------------------------------------
+            {
+                let velocity_pipeline = pipeline_cache
+                    .get_compute_pipeline(pipeline.velocity_project_pipeline)
+                    .unwrap();
+
+                let pressure_index = buffers.pressure.index();
+                let velocity_index = buffers.velocity.index();
+
+                let mut pass = render_context
+                    .command_encoder()
+                    .begin_compute_pass(&ComputePassDescriptor::default());
+
+                pass.set_pipeline(velocity_pipeline);
+                pass.set_bind_group(
+                    0,
+                    &bind_groups.velocity_project[velocity_index][pressure_index],
+                    &[],
+                );
+                pass.dispatch_workgroups(
+                    SIZE.x.div_ceil(WORKGROUP_SIZE),
+                    SIZE.y.div_ceil(WORKGROUP_SIZE),
+                    1,
+                );
+            }
+            buffers.velocity.swap();
         }
     }
 }

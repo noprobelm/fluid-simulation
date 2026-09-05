@@ -69,3 +69,5 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 
     textureStore(density_out, p, vec4<f32>(density, 0.0, 0.0, 0.0));
 }
+
+

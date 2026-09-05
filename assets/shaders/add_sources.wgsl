@@ -45,7 +45,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if (!is_boundary(p)) {
         let uv = (vec2<f32>(id.xy) + vec2<f32>(0.5)) / config.dimensions;
         let cursor = vec2<f32>(config.cursor_position.x, config.cursor_position.y);
-        let radius = 0.025;
+        let radius = 0.0125;
 
         if (config.density_source_active != 0u && distance(uv, cursor) <= radius) {
             density += config.cursor_density * config.time;

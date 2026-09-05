@@ -62,3 +62,5 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let div = -0.5 * h * (right.x - left.x + up.y - down.y);
     textureStore(divergence, p, vec4<f32>(div, 0.0, 0.0, 0.0));
 }
+
+
