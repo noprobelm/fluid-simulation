@@ -25,8 +25,7 @@ var velocity_out: texture_storage_2d<rg32float, write>;
 var<uniform> config: FluidSimulationUniforms;
 
 fn projected_velocity_at(p: vec2<i32>) -> vec2<f32> {
-    let n = max(config.dimensions.x - 2.0, 1.0);
-    let h = 1.0 / n;
+    let n = max(config.dimensions - vec2<f32>(2.0), vec2<f32>(1.0));
 
     let left  = pressure_at(p + vec2<i32>(-1, 0));
     let right = pressure_at(p + vec2<i32>( 1, 0));
@@ -36,8 +35,8 @@ fn projected_velocity_at(p: vec2<i32>) -> vec2<f32> {
     let velocity = velocity_at(p);
 
     return vec2<f32>(
-        velocity.x - 0.5 * (right - left) / h,
-        velocity.y - 0.5 * (up - down) / h,
+        velocity.x - 0.5 * n.x * (right - left),
+        velocity.y - 0.5 * n.y * (up - down),
     );
 }
 
@@ -103,5 +102,4 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         vec4<f32>(boundary_v, 0.0, 0.0),
     );
 }
-
 

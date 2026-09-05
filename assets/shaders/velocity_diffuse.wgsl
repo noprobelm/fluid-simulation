@@ -79,7 +79,7 @@ if (p.y == height - 1) {
     return;
 }
 
-    let n = max(config.dimensions.x - 2.0, 1.0);
+    let n = max(config.dimensions - vec2<f32>(2.0), vec2<f32>(1.0));
     let a = config.time * config.visc * n * n;
 
     let source = textureLoad(velocity_original, p).rg;
@@ -88,9 +88,9 @@ if (p.y == height - 1) {
     let down = velocity_at(p + vec2<i32>(0, -1));
     let up = velocity_at(p + vec2<i32>(0, 1));
 
-    let velocity = (source + a * (left + right + down + up)) / (1.0 + 4.0 * a);
+    let velocity = (source + a.x * (left + right) + a.y * (down + up))
+        / (1.0 + 2.0 * (a.x + a.y));
 
     textureStore(velocity_out, p, vec4<f32>(velocity, 0.0, 0.0));
 }
-
 

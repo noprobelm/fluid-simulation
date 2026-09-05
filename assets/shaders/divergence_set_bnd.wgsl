@@ -25,17 +25,16 @@ fn velocity_at(p: vec2<i32>) -> vec2<f32> {
 }
 
 fn divergence_at_interior(p: vec2<i32>) -> f32 {
-    let n = max(config.dimensions.x - 2.0, 1.0);
-    let h = 1.0 / n;
+    let n = max(config.dimensions - vec2<f32>(2.0), vec2<f32>(1.0));
 
     let left  = velocity_at(p + vec2<i32>(-1,  0));
     let right = velocity_at(p + vec2<i32>( 1,  0));
     let down  = velocity_at(p + vec2<i32>( 0, -1));
     let up    = velocity_at(p + vec2<i32>( 0,  1));
 
-    return -0.5 * h * (
-        right.x - left.x +
-        up.y - down.y
+    return -0.5 * (
+        n.x * (right.x - left.x) +
+        n.y * (up.y - down.y)
     );
 }
 

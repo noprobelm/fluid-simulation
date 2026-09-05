@@ -29,8 +29,8 @@ const PRESSURE_SOLVE_SHADER: &str = "shaders/pressure_solve.wgsl";
 const VELOCITY_DIFFUSE_SHADER: &str = "shaders/velocity_diffuse.wgsl";
 const VELOCITY_PROJECT_SHADER: &str = "shaders/velocity_project.wgsl";
 
-const DISPLAY_FACTOR: u32 = 4;
-const SIZE: UVec2 = UVec2::new((1440 / DISPLAY_FACTOR) + 2, (1440 / DISPLAY_FACTOR) + 2);
+const DISPLAY_FACTOR: u32 = 1;
+const SIZE: UVec2 = UVec2::new((2560 / DISPLAY_FACTOR) + 2, (1440 / DISPLAY_FACTOR) + 2);
 const WORKGROUP_SIZE: u32 = 8;
 const DIFFUSION_ITERATIONS: usize = 20;
 const PRESSURE_SOLVE_ITERATIONS: usize = 20;

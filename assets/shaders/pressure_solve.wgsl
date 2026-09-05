@@ -32,6 +32,8 @@ fn pressure_at(p: vec2<i32>) -> f32 {
 }
 
 fn solve_pressure_at(p: vec2<i32>) -> f32 {
+    let n = max(config.dimensions - vec2<f32>(2.0), vec2<f32>(1.0));
+    let inverse_spacing_squared = n * n;
     let div = divergence_at(p);
 
     let left  = pressure_at(p + vec2<i32>(-1,  0));
@@ -39,7 +41,11 @@ fn solve_pressure_at(p: vec2<i32>) -> f32 {
     let down  = pressure_at(p + vec2<i32>( 0, -1));
     let up    = pressure_at(p + vec2<i32>( 0,  1));
 
-    return (div + left + right + down + up) / 4.0;
+    return (
+        div +
+        inverse_spacing_squared.x * (left + right) +
+        inverse_spacing_squared.y * (down + up)
+    ) / (2.0 * (inverse_spacing_squared.x + inverse_spacing_squared.y));
 }
 
 @compute
@@ -88,5 +94,4 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         vec4<f32>(pressure, 0.0, 0.0, 0.0),
     );
 }
-
 

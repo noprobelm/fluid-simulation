@@ -21,15 +21,15 @@ var velocity_out: texture_storage_2d<rg32float, write>;
 var<uniform> config: FluidSimulationUniforms;
 
 fn advected_velocity_at(p: vec2<i32>) -> vec2<f32> {
-    let n = max(config.dimensions.x - 2.0, 1.0);
+    let n = max(config.dimensions - vec2<f32>(2.0), vec2<f32>(1.0));
 
     let velocity = velocity_at(p);
 
-    var x = f32(p.x) - config.time * n * velocity.x;
-    var y = f32(p.y) - config.time * n * velocity.y;
+    var x = f32(p.x) - config.time * n.x * velocity.x;
+    var y = f32(p.y) - config.time * n.y * velocity.y;
 
-    x = clamp(x, 0.5, n + 0.5);
-    y = clamp(y, 0.5, n + 0.5);
+    x = clamp(x, 0.5, n.x + 0.5);
+    y = clamp(y, 0.5, n.y + 0.5);
 
     let i0 = i32(floor(x));
     let i1 = i0 + 1;

@@ -32,7 +32,7 @@ fn source_at(p: vec2<i32>) -> f32 {
 }
 
 fn diffuse_density_at(p: vec2<i32>) -> f32 {
-    let n = max(config.dimensions.x - 2.0, 1.0);
+    let n = max(config.dimensions - vec2<f32>(2.0), vec2<f32>(1.0));
     let a = config.time * config.diff * n * n;
 
     let source = source_at(p);
@@ -44,8 +44,8 @@ fn diffuse_density_at(p: vec2<i32>) -> f32 {
 
     return (
         source +
-        a * (left + right + down + up)
-    ) / (1.0 + 4.0 * a);
+        a.x * (left + right) + a.y * (down + up)
+    ) / (1.0 + 2.0 * (a.x + a.y));
 }
 @compute
 @workgroup_size(8, 8, 1)
@@ -77,7 +77,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
 
-    let n = max(config.dimensions.x - 2.0, 1.0);
+    let n = max(config.dimensions - vec2<f32>(2.0), vec2<f32>(1.0));
     let a = config.time * config.diff * n * n;
 
     let source = textureLoad(density_original, p).r;
@@ -86,9 +86,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let down = density_at(p + vec2<i32>(0, -1));
     let up = density_at(p + vec2<i32>(0, 1));
 
-    let density = (source + a * (left + right + down + up)) / (1.0 + 4.0 * a);
+    let density = (source + a.x * (left + right) + a.y * (down + up))
+        / (1.0 + 2.0 * (a.x + a.y));
 
     textureStore(density_out, p, vec4<f32>(density, 0.0, 0.0, 0.0));
 }
-
 
