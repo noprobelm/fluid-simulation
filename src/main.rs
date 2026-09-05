@@ -122,6 +122,35 @@ impl Plugin for FluidSimComputePlugin {
     }
 }
 
+#[derive(Copy, Clone)]
+enum PingPong {
+    A,
+    B,
+}
+
+impl PingPong {
+    fn index(&self) -> usize {
+        match self {
+            Self::A => 0,
+            Self::B => 1,
+        }
+    }
+
+    fn swap(&mut self) {
+        *self = match self {
+            Self::A => Self::B,
+            Self::B => Self::A,
+        }
+    }
+}
+
+#[derive(Clone)]
+struct FluidSimBuffers {
+    density: PingPong,
+    velocity: PingPong,
+    pressure: PingPong,
+}
+
 #[derive(Resource, Clone, ExtractResource)]
 struct FluidSimImages {
     density_original: Handle<Image>,
