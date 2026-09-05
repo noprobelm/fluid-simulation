@@ -463,7 +463,7 @@ fn init_fluid_sim_pipeline(
             ShaderStages::COMPUTE,
             (
                 texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::ReadOnly),
-                texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::ReadWrite),
+                texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::WriteOnly),
                 uniform_buffer::<FluidSimUniforms>(false),
             ),
         ),
