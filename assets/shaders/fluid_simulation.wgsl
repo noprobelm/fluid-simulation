@@ -1,8 +1,8 @@
-@group(0) @binding(0) var density_original: texture_storage_2d<rgba32float, read>;
+@group(0) @binding(0) var density_original: texture_storage_2d<r32float, read>;
 
-@group(0) @binding(1) var density_current: texture_storage_2d<rgba32float, read>;
+@group(0) @binding(1) var density_current: texture_storage_2d<r32float, read>;
 
-@group(0) @binding(2) var density_next: texture_storage_2d<rgba32float, write>;
+@group(0) @binding(2) var density_next: texture_storage_2d<r32float, write>;
 
 @group(0) @binding(3) var velocity_current: texture_storage_2d<rgba32float, read>;
 

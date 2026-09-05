@@ -49,15 +49,20 @@ fn main() {
 }
 
 fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
+    let mut density = Image::new_target_texture(SIZE.x, SIZE.y, TextureFormat::R32Float, None);
     let mut image = Image::new_target_texture(SIZE.x, SIZE.y, TextureFormat::Rgba32Float, None);
     image.asset_usage = RenderAssetUsages::RENDER_WORLD;
     image.texture_descriptor.usage = TextureUsages::COPY_SRC
         | TextureUsages::COPY_DST
         | TextureUsages::STORAGE_BINDING
         | TextureUsages::TEXTURE_BINDING;
-    let density_original = images.add(image.clone());
-    let density_current = images.add(image.clone());
-    let density_next = images.add(image.clone());
+    density.texture_descriptor.usage = TextureUsages::COPY_SRC
+        | TextureUsages::COPY_DST
+        | TextureUsages::STORAGE_BINDING
+        | TextureUsages::TEXTURE_BINDING;
+    let density_original = images.add(density.clone());
+    let density_current = images.add(density.clone());
+    let density_next = images.add(density.clone());
 
     let velocity_current = images.add(image.clone());
     let velocity_next = images.add(image);
@@ -240,11 +245,11 @@ fn init_fluid_sim_pipeline(
             ShaderStages::COMPUTE,
             (
                 // @binding(0): density_original
-                texture_storage_2d(TextureFormat::Rgba32Float, StorageTextureAccess::ReadOnly),
+                texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::ReadOnly),
                 // @binding(1): density_current
-                texture_storage_2d(TextureFormat::Rgba32Float, StorageTextureAccess::ReadOnly),
+                texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::ReadOnly),
                 // @binding(2): density_next
-                texture_storage_2d(TextureFormat::Rgba32Float, StorageTextureAccess::WriteOnly),
+                texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::WriteOnly),
                 // @binding(3): velocity_current
                 texture_storage_2d(TextureFormat::Rgba32Float, StorageTextureAccess::ReadOnly),
                 // @binding(4): velocity_next
