@@ -1,0 +1,46 @@
+struct FluidSimulationUniforms {
+    alive_color: vec4<f32>,
+    cursor_position: vec2<f32>,
+    cursor_density: f32,
+    time: f32,
+    diff: f32,
+    dimensions: vec2<f32>,
+};
+
+@group(0) @binding(0)
+var density_in: texture_storage_2d<r32float, read>;
+
+@group(0) @binding(1)
+var density_out: texture_storage_2d<r32float, write>;
+
+@group(0) @binding(2)
+var<uniform> config: FluidSimulationUniforms;
+
+fn is_boundary(p: vec2<i32>) -> bool {
+    let width = i32(config.dimensions.x);
+    let height = i32(config.dimensions.y);
+    return p.x == 0 || p.y == 0 || p.x == width - 1 || p.y == height - 1;
+}
+
+@compute
+@workgroup_size(8, 8, 1)
+fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+    if (id.x >= u32(config.dimensions.x) || id.y >= u32(config.dimensions.y)) {
+        return;
+    }
+
+    let p = vec2<i32>(id.xy);
+    var density = textureLoad(density_in, p).r;
+
+    if (!is_boundary(p)) {
+        let uv = (vec2<f32>(id.xy) + vec2<f32>(0.5)) / config.dimensions;
+        let cursor = vec2<f32>(config.cursor_position.x, config.cursor_position.y);
+        let radius = 0.025;
+
+        if (distance(uv, cursor) <= radius) {
+            density += config.cursor_density * config.time;
+        }
+    }
+
+    textureStore(density_out, p, vec4<f32>(density, 0.0, 0.0, 0.0));
+}

@@ -17,8 +17,11 @@ use bevy::{
 };
 use std::borrow::Cow;
 
-/// This example uses a shader source file from the assets subdirectory
-const SHADER_ASSET_PATH: &str = "shaders/fluid_simulation.wgsl";
+const INIT_SHADER: &str = "shaders/init.wgsl";
+const DENSITY_UPDATE_SHADER: &str = "shaders/density_update.wgsl";
+const DENSITY_DIFFUSE_SHADER: &str = "shaders/density_diffuse.wgsl";
+const DENSITY_ADVECT_SHADER: &str = "shaders/density_advect.wgsl";
+const COMPUTE_DIVERGENCE_SHADER: &str = "shaders/divergence.wgsl";
 
 const DISPLAY_FACTOR: u32 = 4;
 const SIZE: UVec2 = UVec2::new((1280 / DISPLAY_FACTOR) + 2, (1280 / DISPLAY_FACTOR) + 2);
@@ -33,7 +36,6 @@ fn main() {
                 .set(WindowPlugin {
                     primary_window: Some(Window {
                         resolution: (SIZE * DISPLAY_FACTOR).into(),
-                        // uncomment for unthrottled FPS
                         // present_mode: bevy::window::PresentMode::AutoNoVsync,
                         ..default()
                     }),
@@ -50,13 +52,15 @@ fn main() {
 
 fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     let mut density = Image::new_target_texture(SIZE.x, SIZE.y, TextureFormat::R32Float, None);
+    density.asset_usage = RenderAssetUsages::RENDER_WORLD;
     density.texture_descriptor.usage = TextureUsages::COPY_SRC
         | TextureUsages::COPY_DST
         | TextureUsages::STORAGE_BINDING
         | TextureUsages::TEXTURE_BINDING;
+
     let density_original = images.add(density.clone());
     let density_current = images.add(density.clone());
-    let density_next = images.add(density.clone());
+    let density_next = images.add(density);
 
     let mut velocity = Image::new_target_texture(SIZE.x, SIZE.y, TextureFormat::Rg32Float, None);
     velocity.asset_usage = RenderAssetUsages::RENDER_WORLD;
@@ -64,39 +68,48 @@ fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
         | TextureUsages::COPY_DST
         | TextureUsages::STORAGE_BINDING
         | TextureUsages::TEXTURE_BINDING;
+
     let velocity_current = images.add(velocity.clone());
     let velocity_next = images.add(velocity);
 
+    let mut divergence = Image::new_target_texture(SIZE.x, SIZE.y, TextureFormat::R32Float, None);
+    divergence.asset_usage = RenderAssetUsages::RENDER_WORLD;
+    divergence.texture_descriptor.usage = TextureUsages::STORAGE_BINDING;
+
+    let divergence = images.add(divergence);
+
     commands.insert_resource(FluidSimImages {
         density_original,
-        density_current,
+        density_current: density_current.clone(),
         density_next: density_next.clone(),
         velocity_current,
         velocity_next,
+        divergence,
     });
 
     commands.insert_resource(FluidSimUniforms {
         alive_color: LinearRgba::RED,
         cursor_position: Vec2::ZERO,
-        cursor_density: 10.,
+        cursor_density: 10.0,
         time: 0.0,
         diff: 0.0001,
         dimensions: SIZE.as_vec2(),
     });
 
-    // JAB TODO: Replace this with some other texture that is influenced by the current density state
+    // We'll temporarily display density until we have a better rendering solution
     commands.spawn((
         Sprite {
-            image: density_next,
+            image: density_current,
             custom_size: Some(SIZE.as_vec2()),
             ..default()
         },
         Transform::from_scale(Vec3::splat(DISPLAY_FACTOR as f32)),
     ));
+
     commands.spawn(Camera2d);
 }
 
-// Switch texture to display every frame to show the one that was written to most recently.
+// We'll temporarily display density until we have a better rendering solution
 fn switch_textures(images: Res<FluidSimImages>, mut sprite: Single<&mut Sprite>) {
     if sprite.image == images.density_current {
         sprite.image = images.density_next.clone();
@@ -109,12 +122,11 @@ struct FluidSimComputePlugin;
 
 impl Plugin for FluidSimComputePlugin {
     fn build(&self, app: &mut App) {
-        // Extract the game of life image resource from the main world into the render world
-        // for operation on by the compute shader and display on the sprite.
         app.add_plugins((
             ExtractResourcePlugin::<FluidSimImages>::default(),
             ExtractResourcePlugin::<FluidSimUniforms>::default(),
         ));
+
         let render_app = app.sub_app_mut(RenderApp);
         render_app
             .init_resource::<FluidSimBuffers>()
@@ -122,9 +134,9 @@ impl Plugin for FluidSimComputePlugin {
             .add_systems(RenderStartup, init_fluid_sim_pipeline)
             .add_systems(
                 Render,
-                prepare_bind_group.in_set(RenderSystems::PrepareBindGroups),
+                prepare_bind_groups.in_set(RenderSystems::PrepareBindGroups),
             )
-            .add_systems(Render, update.in_set(RenderSystems::Prepare))
+            .add_systems(Render, update_pipeline_state.in_set(RenderSystems::Prepare))
             .add_systems(RenderGraph, fluid_simulation.before(camera_driver));
     }
 }
@@ -137,7 +149,7 @@ enum PingPong {
 }
 
 impl PingPong {
-    fn index(&self) -> usize {
+    fn index(self) -> usize {
         match self {
             Self::A => 0,
             Self::B => 1,
@@ -148,7 +160,7 @@ impl PingPong {
         *self = match self {
             Self::A => Self::B,
             Self::B => Self::A,
-        }
+        };
     }
 }
 
@@ -166,6 +178,7 @@ struct FluidSimImages {
     density_next: Handle<Image>,
     velocity_current: Handle<Image>,
     velocity_next: Handle<Image>,
+    divergence: Handle<Image>,
 }
 
 #[derive(Resource, Clone, ExtractResource, ShaderType)]
@@ -179,9 +192,20 @@ struct FluidSimUniforms {
 }
 
 #[derive(Resource)]
-struct FluidSimBindGroups([BindGroup; 2]);
+struct FluidSimBindGroups {
+    init: BindGroup,
 
-fn prepare_bind_group(
+    // [density ping-pong state]
+    density_update: [BindGroup; 2],
+    density_diffuse: [BindGroup; 2],
+
+    // [density ping-pong state][velocity ping-pong state]
+    density_advect: [[BindGroup; 2]; 2],
+
+    compute_divergence: [BindGroup; 2],
+}
+
+fn prepare_bind_groups(
     mut commands: Commands,
     pipeline: Res<FluidSimPipeline>,
     gpu_images: Res<RenderAssets<GpuImage>>,
@@ -192,49 +216,188 @@ fn prepare_bind_group(
     queue: Res<RenderQueue>,
 ) {
     let density_original = gpu_images.get(&fluid_sim_images.density_original).unwrap();
-    let density_current = gpu_images.get(&fluid_sim_images.density_current).unwrap();
-    let density_next = gpu_images.get(&fluid_sim_images.density_next).unwrap();
+    let density_a = gpu_images.get(&fluid_sim_images.density_current).unwrap();
+    let density_b = gpu_images.get(&fluid_sim_images.density_next).unwrap();
 
-    let velocity_current = gpu_images.get(&fluid_sim_images.velocity_current).unwrap();
-    let velocity_next = gpu_images.get(&fluid_sim_images.velocity_next).unwrap();
+    let velocity_a = gpu_images.get(&fluid_sim_images.velocity_current).unwrap();
+    let velocity_b = gpu_images.get(&fluid_sim_images.velocity_next).unwrap();
+
+    let divergence = gpu_images.get(&fluid_sim_images.divergence).unwrap();
 
     let mut uniform_buffer = UniformBuffer::from(fluid_sim_uniforms.into_inner());
     uniform_buffer.write_buffer(&render_device, &queue);
 
-    let bind_group_0 = render_device.create_bind_group(
-        None,
-        &pipeline_cache.get_bind_group_layout(&pipeline.texture_bind_group_layout),
+    let init_layout = pipeline_cache.get_bind_group_layout(&pipeline.init_bind_group_layout);
+    let density_update_layout =
+        pipeline_cache.get_bind_group_layout(&pipeline.density_update_bind_group_layout);
+    let density_diffuse_layout =
+        pipeline_cache.get_bind_group_layout(&pipeline.density_diffuse_bind_group_layout);
+    let density_advect_layout =
+        pipeline_cache.get_bind_group_layout(&pipeline.density_advect_bind_group_layout);
+    let divergence_layout =
+        pipeline_cache.get_bind_group_layout(&pipeline.compute_divergence_bind_group_layout);
+
+    // init.wgsl:
+    //   0 density_a (write)
+    //   1 density_b (write)
+    //   2 velocity_a (write)
+    //   3 velocity_b (write)
+    //   4 config
+    let init = render_device.create_bind_group(
+        Some("fluid init bind group"),
+        &init_layout,
         &BindGroupEntries::sequential((
-            &density_original.texture_view,
-            &density_current.texture_view,
-            &density_next.texture_view,
-            &velocity_current.texture_view,
-            &velocity_next.texture_view,
+            &density_a.texture_view,
+            &density_b.texture_view,
+            &velocity_a.texture_view,
+            &velocity_b.texture_view,
             &uniform_buffer,
         )),
     );
-    let bind_group_1 = render_device.create_bind_group(
-        None,
-        &pipeline_cache.get_bind_group_layout(&pipeline.texture_bind_group_layout),
-        &BindGroupEntries::sequential((
-            &density_original.texture_view,
-            &density_next.texture_view,
-            &density_current.texture_view,
-            &velocity_next.texture_view,
-            &velocity_current.texture_view,
-            &uniform_buffer,
-        )),
-    );
-    commands.insert_resource(FluidSimBindGroups([bind_group_0, bind_group_1]));
+
+    // density_update[0] = A -> B
+    // density_update[1] = B -> A
+    let density_update = [
+        render_device.create_bind_group(
+            Some("density update A -> B"),
+            &density_update_layout,
+            &BindGroupEntries::sequential((
+                &density_a.texture_view,
+                &density_b.texture_view,
+                &uniform_buffer,
+            )),
+        ),
+        render_device.create_bind_group(
+            Some("density update B -> A"),
+            &density_update_layout,
+            &BindGroupEntries::sequential((
+                &density_b.texture_view,
+                &density_a.texture_view,
+                &uniform_buffer,
+            )),
+        ),
+    ];
+
+    // density_diffuse[0] = source + A -> B
+    // density_diffuse[1] = source + B -> A
+    let density_diffuse = [
+        render_device.create_bind_group(
+            Some("density diffuse A -> B"),
+            &density_diffuse_layout,
+            &BindGroupEntries::sequential((
+                &density_original.texture_view,
+                &density_a.texture_view,
+                &density_b.texture_view,
+                &uniform_buffer,
+            )),
+        ),
+        render_device.create_bind_group(
+            Some("density diffuse B -> A"),
+            &density_diffuse_layout,
+            &BindGroupEntries::sequential((
+                &density_original.texture_view,
+                &density_b.texture_view,
+                &density_a.texture_view,
+                &uniform_buffer,
+            )),
+        ),
+    ];
+
+    // density_advect[density][velocity]
+    let density_advect = [
+        [
+            // density A + velocity A -> density B
+            render_device.create_bind_group(
+                Some("density advect DA VA -> DB"),
+                &density_advect_layout,
+                &BindGroupEntries::sequential((
+                    &density_a.texture_view,
+                    &velocity_a.texture_view,
+                    &density_b.texture_view,
+                    &uniform_buffer,
+                )),
+            ),
+            // density A + velocity B -> density B
+            render_device.create_bind_group(
+                Some("density advect DA VB -> DB"),
+                &density_advect_layout,
+                &BindGroupEntries::sequential((
+                    &density_a.texture_view,
+                    &velocity_b.texture_view,
+                    &density_b.texture_view,
+                    &uniform_buffer,
+                )),
+            ),
+        ],
+        [
+            // density B + velocity A -> density A
+            render_device.create_bind_group(
+                Some("density advect DB VA -> DA"),
+                &density_advect_layout,
+                &BindGroupEntries::sequential((
+                    &density_b.texture_view,
+                    &velocity_a.texture_view,
+                    &density_a.texture_view,
+                    &uniform_buffer,
+                )),
+            ),
+            // density B + velocity B -> density A
+            render_device.create_bind_group(
+                Some("density advect DB VB -> DA"),
+                &density_advect_layout,
+                &BindGroupEntries::sequential((
+                    &density_b.texture_view,
+                    &velocity_b.texture_view,
+                    &density_a.texture_view,
+                    &uniform_buffer,
+                )),
+            ),
+        ],
+    ];
+
+    let compute_divergence = [
+        render_device.create_bind_group(
+            Some("compute divergence"),
+            &divergence_layout,
+            &BindGroupEntries::sequential((
+                &velocity_a.texture_view,
+                &divergence.texture_view,
+                &uniform_buffer,
+            )),
+        ),
+        render_device.create_bind_group(
+            Some("compute divergence"),
+            &divergence_layout,
+            &BindGroupEntries::sequential((
+                &velocity_b.texture_view,
+                &divergence.texture_view,
+                &uniform_buffer,
+            )),
+        ),
+    ];
+
+    commands.insert_resource(FluidSimBindGroups {
+        init,
+        density_update,
+        density_diffuse,
+        density_advect,
+        compute_divergence,
+    });
 }
 
 #[derive(Resource)]
 struct FluidSimPipeline {
-    texture_bind_group_layout: BindGroupLayoutDescriptor,
+    init_bind_group_layout: BindGroupLayoutDescriptor,
+    density_update_bind_group_layout: BindGroupLayoutDescriptor,
+    density_diffuse_bind_group_layout: BindGroupLayoutDescriptor,
+    density_advect_bind_group_layout: BindGroupLayoutDescriptor,
+    compute_divergence_bind_group_layout: BindGroupLayoutDescriptor,
+
     init_pipeline: CachedComputePipelineId,
-    update_pipeline: CachedComputePipelineId,
-    diffuse_pipeline: CachedComputePipelineId,
-    advect_pipeline: CachedComputePipelineId,
+    density_update_pipeline: CachedComputePipelineId,
+    density_diffuse_pipeline: CachedComputePipelineId,
+    density_advect_pipeline: CachedComputePipelineId,
+    compute_divergence_pipeline: CachedComputePipelineId,
 }
 
 fn init_fluid_sim_pipeline(
@@ -242,58 +405,126 @@ fn init_fluid_sim_pipeline(
     asset_server: Res<AssetServer>,
     pipeline_cache: Res<PipelineCache>,
 ) {
-    let texture_bind_group_layout = BindGroupLayoutDescriptor::new(
-        "FluidSimImages",
+    let init_bind_group_layout = BindGroupLayoutDescriptor::new(
+        "fluid init layout",
         &BindGroupLayoutEntries::sequential(
             ShaderStages::COMPUTE,
             (
-                // @binding(0): density_original
-                texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::ReadOnly),
-                // @binding(1): density_current
-                texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::ReadOnly),
-                // @binding(2): density_next
                 texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::WriteOnly),
-                // @binding(3): velocity_current
-                texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::ReadOnly),
-                // @binding(4): velocity_next
+                texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::WriteOnly),
                 texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::WriteOnly),
-                // @binding(5): config
+                texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::WriteOnly),
                 uniform_buffer::<FluidSimUniforms>(false),
             ),
         ),
     );
-    let shader = asset_server.load(SHADER_ASSET_PATH);
+
+    let density_update_bind_group_layout = BindGroupLayoutDescriptor::new(
+        "density update layout",
+        &BindGroupLayoutEntries::sequential(
+            ShaderStages::COMPUTE,
+            (
+                texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::ReadOnly),
+                texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::WriteOnly),
+                uniform_buffer::<FluidSimUniforms>(false),
+            ),
+        ),
+    );
+
+    let density_diffuse_bind_group_layout = BindGroupLayoutDescriptor::new(
+        "density diffuse layout",
+        &BindGroupLayoutEntries::sequential(
+            ShaderStages::COMPUTE,
+            (
+                texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::ReadOnly),
+                texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::ReadOnly),
+                texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::WriteOnly),
+                uniform_buffer::<FluidSimUniforms>(false),
+            ),
+        ),
+    );
+
+    let density_advect_bind_group_layout = BindGroupLayoutDescriptor::new(
+        "density advect layout",
+        &BindGroupLayoutEntries::sequential(
+            ShaderStages::COMPUTE,
+            (
+                texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::ReadOnly),
+                texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::ReadOnly),
+                texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::WriteOnly),
+                uniform_buffer::<FluidSimUniforms>(false),
+            ),
+        ),
+    );
+
+    let compute_divergence_bind_group_layout = BindGroupLayoutDescriptor::new(
+        "compute divergence layout",
+        &BindGroupLayoutEntries::sequential(
+            ShaderStages::COMPUTE,
+            (
+                texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::ReadOnly),
+                texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::ReadWrite),
+                uniform_buffer::<FluidSimUniforms>(false),
+            ),
+        ),
+    );
+
+    let init_shader = asset_server.load(INIT_SHADER);
+    let density_update_shader = asset_server.load(DENSITY_UPDATE_SHADER);
+    let density_diffuse_shader = asset_server.load(DENSITY_DIFFUSE_SHADER);
+    let density_advect_shader = asset_server.load(DENSITY_ADVECT_SHADER);
+    let compute_divergence_shader = asset_server.load(COMPUTE_DIVERGENCE_SHADER);
+
     let init_pipeline = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
-        layout: vec![texture_bind_group_layout.clone()],
-        shader: shader.clone(),
-        entry_point: Some(Cow::from("init")),
-        ..default()
-    });
-    let update_pipeline = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
-        layout: vec![texture_bind_group_layout.clone()],
-        shader: shader.clone(),
-        entry_point: Some(Cow::from("update")),
-        ..default()
-    });
-    let diffuse_pipeline = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
-        layout: vec![texture_bind_group_layout.clone()],
-        shader: shader.clone(),
-        entry_point: Some(Cow::from("diffuse")),
-        ..default()
-    });
-    let advect_pipeline = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
-        layout: vec![texture_bind_group_layout.clone()],
-        shader,
-        entry_point: Some(Cow::from("advect")),
+        layout: vec![init_bind_group_layout.clone()],
+        shader: init_shader,
+        entry_point: Some(Cow::Borrowed("main")),
         ..default()
     });
 
+    let density_update_pipeline =
+        pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
+            layout: vec![density_update_bind_group_layout.clone()],
+            shader: density_update_shader,
+            entry_point: Some(Cow::Borrowed("main")),
+            ..default()
+        });
+
+    let density_diffuse_pipeline =
+        pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
+            layout: vec![density_diffuse_bind_group_layout.clone()],
+            shader: density_diffuse_shader,
+            entry_point: Some(Cow::Borrowed("main")),
+            ..default()
+        });
+
+    let density_advect_pipeline =
+        pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
+            layout: vec![density_advect_bind_group_layout.clone()],
+            shader: density_advect_shader,
+            entry_point: Some(Cow::Borrowed("main")),
+            ..default()
+        });
+
+    let compute_divergence_pipeline =
+        pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
+            layout: vec![compute_divergence_bind_group_layout.clone()],
+            shader: compute_divergence_shader,
+            entry_point: Some(Cow::Borrowed("main")),
+            ..default()
+        });
+
     commands.insert_resource(FluidSimPipeline {
-        texture_bind_group_layout,
+        init_bind_group_layout,
+        density_update_bind_group_layout,
+        density_diffuse_bind_group_layout,
+        density_advect_bind_group_layout,
+        compute_divergence_bind_group_layout,
         init_pipeline,
-        update_pipeline,
-        diffuse_pipeline,
-        advect_pipeline,
+        density_update_pipeline,
+        density_diffuse_pipeline,
+        density_advect_pipeline,
+        compute_divergence_pipeline,
     });
 }
 
@@ -305,50 +536,41 @@ enum FluidSimState {
     Update,
 }
 
-fn update(
+fn pipeline_ready(pipeline_cache: &PipelineCache, id: CachedComputePipelineId) -> bool {
+    matches!(
+        pipeline_cache.get_compute_pipeline_state(id),
+        CachedPipelineState::Ok(_)
+    )
+}
+
+fn update_pipeline_state(
     pipeline: Res<FluidSimPipeline>,
     pipeline_cache: Res<PipelineCache>,
     mut state: ResMut<FluidSimState>,
-    mut buffers: ResMut<FluidSimBuffers>,
 ) {
-    // if the corresponding pipeline has loaded, transition to the next stage
     match *state {
         FluidSimState::Loading => {
             match pipeline_cache.get_compute_pipeline_state(pipeline.init_pipeline) {
                 CachedPipelineState::Ok(_) => {
                     *state = FluidSimState::Init;
                 }
-                // If the shader hasn't loaded yet, just wait.
                 CachedPipelineState::Err(ShaderCacheError::ShaderNotLoaded(_)) => {}
                 CachedPipelineState::Err(err) => {
-                    panic!("Initializing assets/{SHADER_ASSET_PATH}:\n{err}")
+                    panic!("Initializing {INIT_SHADER}:\n{err}")
                 }
                 _ => {}
             }
         }
         FluidSimState::Init => {
-            let update_ready = matches!(
-                pipeline_cache.get_compute_pipeline_state(pipeline.update_pipeline),
-                CachedPipelineState::Ok(_)
-            );
-            let diffuse_ready = matches!(
-                pipeline_cache.get_compute_pipeline_state(pipeline.diffuse_pipeline),
-                CachedPipelineState::Ok(_)
-            );
-            let advect_ready = matches!(
-                pipeline_cache.get_compute_pipeline_state(pipeline.advect_pipeline),
-                CachedPipelineState::Ok(_)
-            );
-
-            if update_ready && diffuse_ready && advect_ready {
+            if pipeline_ready(&pipeline_cache, pipeline.density_update_pipeline)
+                && pipeline_ready(&pipeline_cache, pipeline.density_diffuse_pipeline)
+                && pipeline_ready(&pipeline_cache, pipeline.density_advect_pipeline)
+                && pipeline_ready(&pipeline_cache, pipeline.compute_divergence_pipeline)
+            {
                 *state = FluidSimState::Update;
             }
         }
-        FluidSimState::Update => {
-            buffers.density.swap();
-            buffers.velocity.swap();
-            buffers.pressure.swap();
-        }
+        FluidSimState::Update => {}
     }
 }
 
@@ -360,7 +582,7 @@ fn fluid_simulation(
     state: Res<FluidSimState>,
     gpu_images: Res<RenderAssets<GpuImage>>,
     fluid_sim_images: Res<FluidSimImages>,
-    buffers: Res<FluidSimBuffers>,
+    mut buffers: ResMut<FluidSimBuffers>,
 ) {
     match *state {
         FluidSimState::Loading => {}
@@ -375,8 +597,7 @@ fn fluid_simulation(
                 .begin_compute_pass(&ComputePassDescriptor::default());
 
             pass.set_pipeline(init_pipeline);
-            pass.set_bind_group(0, &bind_groups.0[0], &[]);
-
+            pass.set_bind_group(0, &bind_groups.init, &[]);
             pass.dispatch_workgroups(
                 SIZE.x.div_ceil(WORKGROUP_SIZE),
                 SIZE.y.div_ceil(WORKGROUP_SIZE),
@@ -385,33 +606,39 @@ fn fluid_simulation(
         }
 
         FluidSimState::Update => {
-            let update_pipeline = pipeline_cache
-                .get_compute_pipeline(pipeline.update_pipeline)
-                .unwrap();
-
+            // ------------------------------------------------------------
+            // 1. Add density source: current density -> other density
+            // ------------------------------------------------------------
             {
+                let update_pipeline = pipeline_cache
+                    .get_compute_pipeline(pipeline.density_update_pipeline)
+                    .unwrap();
+
+                let density_index = buffers.density.index();
+
                 let mut pass = render_context
                     .command_encoder()
                     .begin_compute_pass(&ComputePassDescriptor::default());
 
                 pass.set_pipeline(update_pipeline);
-                pass.set_bind_group(0, &bind_groups.0[buffers.density.index()], &[]);
-
+                pass.set_bind_group(0, &bind_groups.density_update[density_index], &[]);
                 pass.dispatch_workgroups(
                     SIZE.x.div_ceil(WORKGROUP_SIZE),
                     SIZE.y.div_ceil(WORKGROUP_SIZE),
                     1,
                 );
             }
+            buffers.density.swap();
 
-            let updated_density_handle = if buffers.density.index() == 0 {
-                &fluid_sim_images.density_next
-            } else {
-                &fluid_sim_images.density_current
+            // ------------------------------------------------------------
+            // 2. Copy the updated density into the fixed diffusion source x0
+            // ------------------------------------------------------------
+            let updated_density_handle = match buffers.density {
+                PingPong::A => &fluid_sim_images.density_current,
+                PingPong::B => &fluid_sim_images.density_next,
             };
 
             let updated_density = gpu_images.get(updated_density_handle).unwrap();
-
             let density_original = gpu_images.get(&fluid_sim_images.density_original).unwrap();
 
             render_context.command_encoder().copy_texture_to_texture(
@@ -424,44 +651,78 @@ fn fluid_simulation(
                 },
             );
 
-            let diffuse_pipeline = pipeline_cache
-                .get_compute_pipeline(pipeline.diffuse_pipeline)
-                .unwrap();
-
+            // ------------------------------------------------------------
+            // 3. Jacobi diffusion iterations
+            // ------------------------------------------------------------
             {
+                let diffuse_pipeline = pipeline_cache
+                    .get_compute_pipeline(pipeline.density_diffuse_pipeline)
+                    .unwrap();
+
                 let mut pass = render_context
                     .command_encoder()
                     .begin_compute_pass(&ComputePassDescriptor::default());
 
                 pass.set_pipeline(diffuse_pipeline);
 
-                for i in 0..DIFFUSION_ITERATIONS {
-                    let diffuse_index = (buffers.density.index() + 1 + i) % 2;
-
-                    pass.set_bind_group(0, &bind_groups.0[diffuse_index], &[]);
-
+                for _ in 0..DIFFUSION_ITERATIONS {
+                    let density_index = buffers.density.index();
+                    pass.set_bind_group(0, &bind_groups.density_diffuse[density_index], &[]);
                     pass.dispatch_workgroups(
                         SIZE.x.div_ceil(WORKGROUP_SIZE),
                         SIZE.y.div_ceil(WORKGROUP_SIZE),
                         1,
                     );
+                    buffers.density.swap();
                 }
             }
 
-            let advect_pipeline = pipeline_cache
-                .get_compute_pipeline(pipeline.advect_pipeline)
-                .unwrap();
-
+            // ------------------------------------------------------------
+            // 4. Advect density through the currently-valid velocity field
+            // ------------------------------------------------------------
             {
+                let advect_pipeline = pipeline_cache
+                    .get_compute_pipeline(pipeline.density_advect_pipeline)
+                    .unwrap();
+
+                let density_index = buffers.density.index();
+                let velocity_index = buffers.velocity.index();
+
                 let mut pass = render_context
                     .command_encoder()
                     .begin_compute_pass(&ComputePassDescriptor::default());
 
                 pass.set_pipeline(advect_pipeline);
+                pass.set_bind_group(
+                    0,
+                    &bind_groups.density_advect[density_index][velocity_index],
+                    &[],
+                );
+                pass.dispatch_workgroups(
+                    SIZE.x.div_ceil(WORKGROUP_SIZE),
+                    SIZE.y.div_ceil(WORKGROUP_SIZE),
+                    1,
+                );
+            }
+            buffers.density.swap();
 
-                let advect_index = (buffers.density.index() + 1 + DIFFUSION_ITERATIONS) % 2;
-                pass.set_bind_group(0, &bind_groups.0[advect_index], &[]);
+            // ------------------------------------------------------------
+            // 4. Comptue divergence
+            // ------------------------------------------------------------
 
+            {
+                let velocity_index = buffers.velocity.index();
+
+                let divergence_pipeline = pipeline_cache
+                    .get_compute_pipeline(pipeline.compute_divergence_pipeline)
+                    .unwrap();
+
+                let mut pass = render_context
+                    .command_encoder()
+                    .begin_compute_pass(&ComputePassDescriptor::default());
+
+                pass.set_pipeline(divergence_pipeline);
+                pass.set_bind_group(0, &bind_groups.compute_divergence[velocity_index], &[]);
                 pass.dispatch_workgroups(
                     SIZE.x.div_ceil(WORKGROUP_SIZE),
                     SIZE.y.div_ceil(WORKGROUP_SIZE),
@@ -485,6 +746,7 @@ fn update_cursor_position(
 
         uniforms.cursor_position = relative.clamp(Vec2::ZERO, Vec2::ONE);
     }
+
     Ok(())
 }
 
