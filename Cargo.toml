@@ -15,6 +15,7 @@ bevy = { version = "0.19", default-features = false, features = [
     "ui",
     "audio",
 ] }
+bevy_egui = "0.42.0"
 rand = "0.9"
 # Compile out low-severity logs to improve performance.
 # Remove these features if you want to profile your game with tracy.
