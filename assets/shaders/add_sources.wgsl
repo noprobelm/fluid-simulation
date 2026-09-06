@@ -2,10 +2,13 @@ struct AddSourcesUniforms {
     dt: f32,
     dimensions: vec2<f32>,
     cursor_position: vec2<f32>,
+    previous_cursor_position: vec2<f32>,
     cursor_velocity: vec2<f32>,
     cursor_density: f32,
     density_source_active: u32,
     velocity_source_active: u32,
+    density_stroke_continuous: u32,
+    velocity_stroke_continuous: u32,
 };
 
 @group(0) @binding(0)
@@ -29,6 +32,27 @@ fn is_boundary(p: vec2<i32>) -> bool {
     return p.x == 0 || p.y == 0 || p.x == width - 1 || p.y == height - 1;
 }
 
+fn stroke_coverage(pixel: vec2<f32>, stroke_continuous: u32) -> f32 {
+    let cursor = config.cursor_position * config.dimensions;
+    let previous_cursor = select(
+        cursor,
+        config.previous_cursor_position * config.dimensions,
+        stroke_continuous != 0u,
+    );
+    let segment = cursor - previous_cursor;
+    let segment_length_squared = dot(segment, segment);
+    let t = clamp(
+        dot(pixel - previous_cursor, segment) / max(segment_length_squared, 0.000001),
+        0.0,
+        1.0,
+    );
+    let distance_to_stroke = length(pixel - (previous_cursor + t * segment));
+    let radius = 0.0125 * min(config.dimensions.x, config.dimensions.y);
+    let feather = 2.0;
+
+    return 1.0 - smoothstep(radius - feather, radius + feather, distance_to_stroke);
+}
+
 @compute
 @workgroup_size(8, 8, 1)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -41,31 +65,21 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     var velocity = textureLoad(velocity_in, p).rg;
 
     if (!is_boundary(p)) {
-        let uv = (vec2<f32>(id.xy) + vec2<f32>(0.5)) / config.dimensions;
-        let cursor = config.cursor_position;
-        let grid_delta = (uv - cursor) * config.dimensions;
-        let radius = 0.0125 * min(config.dimensions.x, config.dimensions.y);
-        let feather = 2.0;
-        let coverage = 1.0 - smoothstep(
-            radius - feather,
-            radius + feather,
-            length(grid_delta),
-        );
+        let pixel = vec2<f32>(id.xy) + vec2<f32>(0.5);
 
         if (config.density_source_active != 0u) {
+            let coverage = stroke_coverage(pixel, config.density_stroke_continuous);
             density += coverage * config.cursor_density * config.dt;
         }
         if (config.velocity_source_active != 0u) {
             const VELOCITY_SOURCE_STRENGTH: f32 = 10.0;
-
-            velocity += coverage * config.cursor_velocity * config.dt;
-
+            let coverage = stroke_coverage(pixel, config.velocity_stroke_continuous);
             velocity += coverage
                 * config.cursor_velocity
                 * config.dt
                 * VELOCITY_SOURCE_STRENGTH;
-                    }
-                }
+        }
+    }
 
     textureStore(density_out, p, vec4<f32>(density, 0.0, 0.0, 0.0));
     textureStore(velocity_out, p, vec4<f32>(velocity, 0.0, 0.0));

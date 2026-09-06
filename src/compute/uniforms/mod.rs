@@ -28,15 +28,18 @@ impl Plugin for UniformsPlugin {
     }
 }
 
-#[derive(Resource, Clone, ExtractResource, ShaderType)]
+#[derive(Resource, Clone, Default, ExtractResource, ShaderType)]
 pub struct AddSourcesUniforms {
     pub dt: f32,
     pub dimensions: Vec2,
     pub cursor_position: Vec2,
+    pub previous_cursor_position: Vec2,
     pub cursor_velocity: Vec2,
     pub cursor_density: f32,
     pub density_source_active: u32,
     pub velocity_source_active: u32,
+    pub density_stroke_continuous: u32,
+    pub velocity_stroke_continuous: u32,
 }
 
 #[derive(Resource, Clone, ExtractResource, ShaderType)]
@@ -75,10 +78,13 @@ fn initialize_uniforms(
         dt: 0.0,
         dimensions,
         cursor_position: Vec2::ZERO,
+        previous_cursor_position: Vec2::ZERO,
         cursor_velocity: Vec2::ZERO,
         cursor_density: 10.0,
         density_source_active: 0,
         velocity_source_active: 0,
+        density_stroke_continuous: 0,
+        velocity_stroke_continuous: 0,
     });
     commands.insert_resource(DimensionsUniforms { dimensions });
     commands.insert_resource(AdvectionUniforms {
