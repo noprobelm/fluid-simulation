@@ -21,6 +21,8 @@ use bevy::{
 };
 use std::borrow::Cow;
 
+pub use crate::compute::uniforms::DensityVisualizeUniforms;
+
 use self::uniforms::{
     AddSourcesUniforms, AdvectionUniforms, DensityDiffuseUniforms, DimensionsUniforms,
     VelocityDiffuseUniforms,
@@ -227,6 +229,7 @@ fn prepare_bind_groups(
     advection_uniforms: Res<AdvectionUniforms>,
     density_diffuse_uniforms: Res<DensityDiffuseUniforms>,
     velocity_diffuse_uniforms: Res<VelocityDiffuseUniforms>,
+    density_visualize_uniforms: Res<DensityVisualizeUniforms>,
     render_device: Res<RenderDevice>,
     pipeline_cache: Res<PipelineCache>,
     queue: Res<RenderQueue>,
@@ -261,6 +264,10 @@ fn prepare_bind_groups(
     let mut velocity_diffuse_uniform_buffer =
         UniformBuffer::from(velocity_diffuse_uniforms.into_inner());
     velocity_diffuse_uniform_buffer.write_buffer(&render_device, &queue);
+
+    let mut density_visualize_uniform_buffer =
+        UniformBuffer::from(density_visualize_uniforms.into_inner());
+    density_visualize_uniform_buffer.write_buffer(&render_device, &queue);
 
     let init_layout = pipeline_cache.get_bind_group_layout(&pipeline.init_bind_group_layout);
     let add_sources_layout =
@@ -608,12 +615,20 @@ fn prepare_bind_groups(
         render_device.create_bind_group(
             Some("visualize density A"),
             &density_visualize_layout,
-            &BindGroupEntries::sequential((&density_a.texture_view, &display.texture_view)),
+            &BindGroupEntries::sequential((
+                &density_a.texture_view,
+                &display.texture_view,
+                &density_visualize_uniform_buffer,
+            )),
         ),
         render_device.create_bind_group(
             Some("visualize density B"),
             &density_visualize_layout,
-            &BindGroupEntries::sequential((&density_b.texture_view, &display.texture_view)),
+            &BindGroupEntries::sequential((
+                &density_b.texture_view,
+                &display.texture_view,
+                &density_visualize_uniform_buffer,
+            )),
         ),
     ];
 
@@ -814,6 +829,7 @@ fn init_fluid_sim_pipeline(
             (
                 texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::ReadOnly),
                 texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::WriteOnly),
+                uniform_buffer::<DensityVisualizeUniforms>(false),
             ),
         ),
     );

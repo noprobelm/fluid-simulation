@@ -22,6 +22,7 @@ impl Plugin for UniformsPlugin {
             ExtractResourcePlugin::<AdvectionUniforms>::default(),
             ExtractResourcePlugin::<DensityDiffuseUniforms>::default(),
             ExtractResourcePlugin::<VelocityDiffuseUniforms>::default(),
+            ExtractResourcePlugin::<DensityVisualizeUniforms>::default(),
         ))
         .add_systems(Startup, initialize_uniforms)
         .add_systems(Update, update_timestep);
@@ -67,6 +68,19 @@ pub struct VelocityDiffuseUniforms {
     pub dimensions: Vec2,
 }
 
+#[derive(Resource, Clone, ExtractResource, ShaderType)]
+pub struct DensityVisualizeUniforms {
+    pub color: LinearRgba,
+}
+
+impl Default for DensityVisualizeUniforms {
+    fn default() -> Self {
+        Self {
+            color: LinearRgba::rgb(0.35, 0.55, 0.95),
+        }
+    }
+}
+
 fn initialize_uniforms(
     mut commands: Commands,
     windows: Query<&Window, With<PrimaryWindow>>,
@@ -101,6 +115,7 @@ fn initialize_uniforms(
         visc: 0.00000001,
         dimensions,
     });
+    commands.init_resource::<DensityVisualizeUniforms>();
 
     Ok(())
 }

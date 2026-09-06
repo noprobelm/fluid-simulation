@@ -1,12 +1,19 @@
+struct DensityVisualizeUniforms {
+    color: vec4<f32>,
+}
+
 @group(0) @binding(0)
 var density: texture_storage_2d<r32float, read>;
 
 @group(0) @binding(1)
 var display: texture_storage_2d<rgba16float, write>;
 
+@group(0) @binding(2)
+var<uniform> config: RenderUniforms;
+
 fn smoke_color(density: f32) -> vec3<f32> {
     let intensity = 1.0 - exp(-max(density, 0.0) * 10.0);
-    let smoke_tint = vec3<f32>(0.35, 0.55, 0.95);
+    let smoke_tint = vec3<f32>(config.color.r, config.color.g, config.color.b);
     return smoke_tint * intensity;
 }
 
