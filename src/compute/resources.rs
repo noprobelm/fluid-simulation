@@ -19,9 +19,9 @@ pub struct Iterations {
 impl Default for Iterations {
     fn default() -> Self {
         Self {
-            density_diffusion: 6,
-            velocity_diffusion: 6,
-            pressure_solve: 6,
+            density_diffusion: 10,
+            velocity_diffusion: 10,
+            pressure_solve: 10,
         }
     }
 }
