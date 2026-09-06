@@ -46,23 +46,19 @@ const VELOCITY_PROJECT_SHADER: &str = "shaders/velocity_project.wgsl";
 const DENSITY_VISUALIZE_SHADER: &str = "shaders/density_visualize.wgsl";
 
 const WORKGROUP_SIZE: u32 = 8;
-const DIFFUSION_ITERATIONS: usize = 20;
-const PRESSURE_SOLVE_ITERATIONS: usize = 20;
-
-// Density and dye share a ping-pong index outside the density diffusion pass. This need to be an
-// even number.
-const _: () = assert!(DIFFUSION_ITERATIONS.is_multiple_of(2));
 
 pub struct ComputePlugin;
 
 impl Plugin for ComputePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<DisplayFactor>()
+            .init_resource::<Iterations>()
             .add_systems(Startup, setup)
             .add_plugins((
                 signals::SignalsPlugin,
                 uniforms::UniformsPlugin,
                 ExtractResourcePlugin::<FluidSimImages>::default(),
+                ExtractResourcePlugin::<Iterations>::default(),
             ));
 
         let render_app = app.sub_app_mut(RenderApp);
@@ -116,6 +112,7 @@ struct FluidSimImages {
     density_original: Handle<Image>,
     density_current: Handle<Image>,
     density_next: Handle<Image>,
+    dye_original: Handle<Image>,
     dye_current: Handle<Image>,
     dye_next: Handle<Image>,
     velocity_original: Handle<Image>,
@@ -175,8 +172,10 @@ fn setup(
 
     let mut dye = Image::new_target_texture(size.x, size.y, TextureFormat::Rgba16Float, None);
     dye.asset_usage = RenderAssetUsages::RENDER_WORLD;
-    dye.texture_descriptor.usage = TextureUsages::STORAGE_BINDING;
+    dye.texture_descriptor.usage =
+        TextureUsages::COPY_SRC | TextureUsages::COPY_DST | TextureUsages::STORAGE_BINDING;
 
+    let dye_original = images.add(dye.clone());
     let dye_current = images.add(dye.clone());
     let dye_next = images.add(dye);
 
@@ -214,6 +213,7 @@ fn setup(
         density_original,
         density_current: density_current.clone(),
         density_next: density_next.clone(),
+        dye_original,
         dye_current,
         dye_next,
         velocity_original,
@@ -260,6 +260,7 @@ fn prepare_bind_groups(
 
     let dye_a = gpu_images.get(&fluid_sim_images.dye_current).unwrap();
     let dye_b = gpu_images.get(&fluid_sim_images.dye_next).unwrap();
+    let dye_original = gpu_images.get(&fluid_sim_images.dye_original).unwrap();
 
     let velocity_original = gpu_images.get(&fluid_sim_images.velocity_original).unwrap();
     let velocity_a = gpu_images.get(&fluid_sim_images.velocity_current).unwrap();
@@ -404,16 +405,19 @@ fn prepare_bind_groups(
         ],
     ];
 
-    // density_diffuse[0] = source + A -> B
-    // density_diffuse[1] = source + B -> A
+    // density_diffuse[0] = density/dye source + A -> B
+    // density_diffuse[1] = density/dye source + B -> A
     let density_diffuse = [
         render_device.create_bind_group(
             Some("density diffuse A -> B"),
             &density_diffuse_layout,
             &BindGroupEntries::sequential((
                 &density_original.texture_view,
+                &dye_original.texture_view,
                 &density_a.texture_view,
+                &dye_a.texture_view,
                 &density_b.texture_view,
+                &dye_b.texture_view,
                 &density_diffuse_uniform_buffer,
             )),
         ),
@@ -422,8 +426,11 @@ fn prepare_bind_groups(
             &density_diffuse_layout,
             &BindGroupEntries::sequential((
                 &density_original.texture_view,
+                &dye_original.texture_view,
                 &density_b.texture_view,
+                &dye_b.texture_view,
                 &density_a.texture_view,
+                &dye_a.texture_view,
                 &density_diffuse_uniform_buffer,
             )),
         ),
@@ -773,8 +780,11 @@ fn init_fluid_sim_pipeline(
             ShaderStages::COMPUTE,
             (
                 texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::ReadOnly),
+                texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::ReadOnly),
                 texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::ReadOnly),
+                texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::ReadOnly),
                 texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::WriteOnly),
+                texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::WriteOnly),
                 uniform_buffer::<DensityDiffuseUniforms>(false),
             ),
         ),
@@ -1093,6 +1103,7 @@ fn fluid_simulation(
     uniforms: Res<DimensionsUniforms>,
     mut buffers: ResMut<FluidSimBuffers>,
     reset: Res<ResetSimulation>,
+    iterations: Res<Iterations>,
 ) {
     let size = uniforms.dimensions.as_uvec2();
 
@@ -1164,6 +1175,7 @@ fn fluid_simulation(
                 &mut render_context,
                 &pipeline,
                 &bind_groups,
+                iterations.velocity_diffusion,
             );
             project_velocity(
                 size,
@@ -1172,6 +1184,7 @@ fn fluid_simulation(
                 &mut render_context,
                 &pipeline,
                 &bind_groups,
+                iterations.pressure_solve,
             );
             advect_velocity(
                 size,
@@ -1188,6 +1201,7 @@ fn fluid_simulation(
                 &mut render_context,
                 &pipeline,
                 &bind_groups,
+                iterations.pressure_solve,
             );
             copy_current_density(
                 size,
@@ -1203,6 +1217,7 @@ fn fluid_simulation(
                 &mut render_context,
                 &pipeline,
                 &bind_groups,
+                iterations.density_diffusion,
             );
             advect_density(
                 size,
@@ -1298,9 +1313,25 @@ fn copy_current_density(
     let current = gpu_images.get(current_handle).unwrap();
     let original = gpu_images.get(&images.density_original).unwrap();
 
+    let current_dye_handle = match buffers.dye {
+        PingPong::A => &images.dye_current,
+        PingPong::B => &images.dye_next,
+    };
+    let current_dye = gpu_images.get(current_dye_handle).unwrap();
+    let original_dye = gpu_images.get(&images.dye_original).unwrap();
+
     render_context.command_encoder().copy_texture_to_texture(
         current.texture.as_image_copy(),
         original.texture.as_image_copy(),
+        Extent3d {
+            width: size.x,
+            height: size.y,
+            depth_or_array_layers: 1,
+        },
+    );
+    render_context.command_encoder().copy_texture_to_texture(
+        current_dye.texture.as_image_copy(),
+        original_dye.texture.as_image_copy(),
         Extent3d {
             width: size.x,
             height: size.y,
@@ -1316,6 +1347,7 @@ fn diffuse_density(
     render_context: &mut RenderContext,
     pipeline: &Res<FluidSimPipeline>,
     bind_groups: &Res<FluidSimBindGroups>,
+    iterations: usize,
 ) {
     let diffuse_pipeline = pipeline_cache
         .get_compute_pipeline(pipeline.density_diffuse_pipeline)
@@ -1327,7 +1359,7 @@ fn diffuse_density(
 
     pass.set_pipeline(diffuse_pipeline);
 
-    for _ in 0..DIFFUSION_ITERATIONS {
+    for _ in 0..iterations {
         let density_index = buffers.density.index();
         pass.set_bind_group(0, &bind_groups.density_diffuse[density_index], &[]);
         pass.dispatch_workgroups(
@@ -1336,6 +1368,7 @@ fn diffuse_density(
             1,
         );
         buffers.density.swap();
+        buffers.dye.swap();
     }
 }
 
@@ -1346,6 +1379,7 @@ fn diffuse_velocity(
     render_context: &mut RenderContext,
     pipeline: &Res<FluidSimPipeline>,
     bind_groups: &Res<FluidSimBindGroups>,
+    iterations: usize,
 ) {
     let diffuse_pipeline = pipeline_cache
         .get_compute_pipeline(pipeline.velocity_diffuse_pipeline)
@@ -1357,7 +1391,7 @@ fn diffuse_velocity(
 
     pass.set_pipeline(diffuse_pipeline);
 
-    for _ in 0..DIFFUSION_ITERATIONS {
+    for _ in 0..iterations {
         let velocity_index = buffers.velocity.index();
         pass.set_bind_group(0, &bind_groups.velocity_diffuse[velocity_index], &[]);
         pass.dispatch_workgroups(
@@ -1462,6 +1496,7 @@ fn project_velocity(
     render_context: &mut RenderContext,
     pipeline: &Res<FluidSimPipeline>,
     bind_groups: &Res<FluidSimBindGroups>,
+    iterations: usize,
 ) {
     let velocity_index = buffers.velocity.index();
     let divergence_pipeline = pipeline_cache
@@ -1522,7 +1557,7 @@ fn project_velocity(
             .command_encoder()
             .begin_compute_pass(&ComputePassDescriptor::default());
         pass.set_pipeline(pressure_pipeline);
-        for _ in 0..PRESSURE_SOLVE_ITERATIONS {
+        for _ in 0..iterations {
             let pressure_index = buffers.pressure.index();
             pass.set_bind_group(0, &bind_groups.pressure_solve[pressure_index], &[]);
             pass.dispatch_workgroups(
