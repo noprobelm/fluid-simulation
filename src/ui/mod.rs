@@ -56,6 +56,14 @@ fn show(mut contexts: EguiContexts, mut fluid_color: ResMut<DensityVisualizeUnif
                             1.0,
                         );
                     }
+
+                    ui.end_row();
+
+                    ui.label("Intensity Scale");
+                    ui.add(
+                        egui::Slider::new(&mut fluid_color.fluid_intensity_scale, 0.0..=20.0)
+                            .step_by(0.1),
+                    );
                 });
         });
     Ok(())

@@ -71,12 +71,14 @@ pub struct VelocityDiffuseUniforms {
 #[derive(Resource, Clone, ExtractResource, ShaderType)]
 pub struct DensityVisualizeUniforms {
     pub color: LinearRgba,
+    pub fluid_intensity_scale: f32,
 }
 
 impl Default for DensityVisualizeUniforms {
     fn default() -> Self {
         Self {
             color: LinearRgba::rgb(0.35, 0.55, 0.95),
+            fluid_intensity_scale: 10.,
         }
     }
 }
