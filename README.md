@@ -6,6 +6,4 @@ Our implementation differs slightly from Stam's in that we are using compute sha
 
 ## Demo
 
-[![Fluid simulation demo](assets/demo/fluid_sim.gif)](assets/demo/fluid_sim.mp4)
-
-Click the preview to watch the full-resolution video.
+https://github.com/user-attachments/assets/5c448e9b-d733-4c87-a0c7-c561ed170309
