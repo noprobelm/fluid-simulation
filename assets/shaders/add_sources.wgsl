@@ -59,9 +59,16 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             density += coverage * config.cursor_density * config.time;
         }
         if (config.velocity_source_active != 0u) {
+            const VELOCITY_SOURCE_STRENGTH: f32 = 2.0;
+
             velocity += coverage * config.cursor_velocity * config.time;
-        }
-    }
+
+            velocity += coverage
+                * config.cursor_velocity
+                * config.time
+                * VELOCITY_SOURCE_STRENGTH;
+                    }
+                }
 
     textureStore(density_out, p, vec4<f32>(density, 0.0, 0.0, 0.0));
     textureStore(velocity_out, p, vec4<f32>(velocity, 0.0, 0.0));
