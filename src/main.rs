@@ -28,6 +28,7 @@ const PRESSURE_CLEAR_SHADER: &str = "shaders/pressure_clear.wgsl";
 const PRESSURE_SOLVE_SHADER: &str = "shaders/pressure_solve.wgsl";
 const VELOCITY_DIFFUSE_SHADER: &str = "shaders/velocity_diffuse.wgsl";
 const VELOCITY_PROJECT_SHADER: &str = "shaders/velocity_project.wgsl";
+const DENSITY_VISUALIZE_SHADER: &str = "shaders/density_visualize.wgsl";
 
 const DISPLAY_FACTOR: u32 = 1;
 const SIZE: UVec2 = UVec2::new((2560 / DISPLAY_FACTOR) + 2, (1440 / DISPLAY_FACTOR) + 2);
@@ -92,6 +93,12 @@ fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     let pressure_current = images.add(pressure.clone());
     let pressure_next = images.add(pressure);
 
+    let mut display = Image::new_target_texture(SIZE.x, SIZE.y, TextureFormat::Rgba16Float, None);
+    display.asset_usage = RenderAssetUsages::RENDER_WORLD;
+    display.texture_descriptor.usage =
+        TextureUsages::STORAGE_BINDING | TextureUsages::TEXTURE_BINDING;
+    let display = images.add(display);
+
     commands.insert_resource(FluidSimImages {
         density_original,
         density_current: density_current.clone(),
@@ -102,6 +109,7 @@ fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
         divergence,
         pressure_current,
         pressure_next,
+        display: display.clone(),
     });
 
     commands.insert_resource(FluidSimUniforms {
@@ -117,10 +125,9 @@ fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
         dimensions: SIZE.as_vec2(),
     });
 
-    // We'll temporarily display density until we have a better rendering solution
     commands.spawn((
         Sprite {
-            image: density_current,
+            image: display,
             custom_size: Some(SIZE.as_vec2()),
             ..default()
         },
@@ -194,6 +201,7 @@ struct FluidSimImages {
     divergence: Handle<Image>,
     pressure_current: Handle<Image>,
     pressure_next: Handle<Image>,
+    display: Handle<Image>,
 }
 
 #[derive(Resource, Clone, ExtractResource, ShaderType)]
@@ -232,6 +240,8 @@ struct FluidSimBindGroups {
 
     // [velocity ping-pong state][pressure ping-pong state]
     velocity_project: [[BindGroup; 2]; 2],
+
+    density_visualize: [BindGroup; 2],
 }
 
 fn prepare_bind_groups(
@@ -256,6 +266,7 @@ fn prepare_bind_groups(
 
     let pressure_a = gpu_images.get(&fluid_sim_images.pressure_current).unwrap();
     let pressure_b = gpu_images.get(&fluid_sim_images.pressure_next).unwrap();
+    let display = gpu_images.get(&fluid_sim_images.display).unwrap();
 
     let mut uniform_buffer = UniformBuffer::from(fluid_sim_uniforms.into_inner());
     uniform_buffer.write_buffer(&render_device, &queue);
@@ -281,6 +292,8 @@ fn prepare_bind_groups(
         pipeline_cache.get_bind_group_layout(&pipeline.pressure_solve_bind_group_layout);
     let velocity_project_layout =
         pipeline_cache.get_bind_group_layout(&pipeline.velocity_project_bind_group_layout);
+    let density_visualize_layout =
+        pipeline_cache.get_bind_group_layout(&pipeline.density_visualize_bind_group_layout);
 
     // init.wgsl:
     //   0 density_a (write)
@@ -600,6 +613,19 @@ fn prepare_bind_groups(
         ],
     ];
 
+    let density_visualize = [
+        render_device.create_bind_group(
+            Some("visualize density A"),
+            &density_visualize_layout,
+            &BindGroupEntries::sequential((&density_a.texture_view, &display.texture_view)),
+        ),
+        render_device.create_bind_group(
+            Some("visualize density B"),
+            &density_visualize_layout,
+            &BindGroupEntries::sequential((&density_b.texture_view, &display.texture_view)),
+        ),
+    ];
+
     commands.insert_resource(FluidSimBindGroups {
         init,
         add_sources,
@@ -612,6 +638,7 @@ fn prepare_bind_groups(
         pressure_clear,
         pressure_solve,
         velocity_project,
+        density_visualize,
     });
 }
 
@@ -628,6 +655,7 @@ struct FluidSimPipeline {
     pressure_clear_bind_group_layout: BindGroupLayoutDescriptor,
     pressure_solve_bind_group_layout: BindGroupLayoutDescriptor,
     velocity_project_bind_group_layout: BindGroupLayoutDescriptor,
+    density_visualize_bind_group_layout: BindGroupLayoutDescriptor,
 
     init_pipeline: CachedComputePipelineId,
     add_sources_pipeline: CachedComputePipelineId,
@@ -640,6 +668,7 @@ struct FluidSimPipeline {
     pressure_clear_pipeline: CachedComputePipelineId,
     pressure_solve_pipeline: CachedComputePipelineId,
     velocity_project_pipeline: CachedComputePipelineId,
+    density_visualize_pipeline: CachedComputePipelineId,
 }
 
 fn init_fluid_sim_pipeline(
@@ -787,6 +816,17 @@ fn init_fluid_sim_pipeline(
         ),
     );
 
+    let density_visualize_bind_group_layout = BindGroupLayoutDescriptor::new(
+        "density visualization layout",
+        &BindGroupLayoutEntries::sequential(
+            ShaderStages::COMPUTE,
+            (
+                texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::ReadOnly),
+                texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::WriteOnly),
+            ),
+        ),
+    );
+
     let init_shader = asset_server.load(INIT_SHADER);
     let add_sources_shader = asset_server.load(ADD_SOURCES_SHADER);
     let density_diffuse_shader = asset_server.load(DENSITY_DIFFUSE_SHADER);
@@ -798,6 +838,7 @@ fn init_fluid_sim_pipeline(
     let pressure_clear_shader = asset_server.load(PRESSURE_CLEAR_SHADER);
     let pressure_solve_shader = asset_server.load(PRESSURE_SOLVE_SHADER);
     let velocity_project_shader = asset_server.load(VELOCITY_PROJECT_SHADER);
+    let density_visualize_shader = asset_server.load(DENSITY_VISUALIZE_SHADER);
 
     let init_pipeline = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
         layout: vec![init_bind_group_layout.clone()],
@@ -885,6 +926,14 @@ fn init_fluid_sim_pipeline(
             ..default()
         });
 
+    let density_visualize_pipeline =
+        pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
+            layout: vec![density_visualize_bind_group_layout.clone()],
+            shader: density_visualize_shader,
+            entry_point: Some(Cow::Borrowed("main")),
+            ..default()
+        });
+
     commands.insert_resource(FluidSimPipeline {
         init_bind_group_layout,
         add_sources_bind_group_layout,
@@ -897,6 +946,7 @@ fn init_fluid_sim_pipeline(
         pressure_clear_bind_group_layout,
         pressure_solve_bind_group_layout,
         velocity_project_bind_group_layout,
+        density_visualize_bind_group_layout,
         init_pipeline,
         add_sources_pipeline,
         density_diffuse_pipeline,
@@ -908,6 +958,7 @@ fn init_fluid_sim_pipeline(
         pressure_clear_pipeline,
         pressure_solve_pipeline,
         velocity_project_pipeline,
+        density_visualize_pipeline,
     });
 }
 
@@ -955,6 +1006,7 @@ fn update_pipeline_state(
                 && pipeline_ready(&pipeline_cache, pipeline.pressure_clear_pipeline)
                 && pipeline_ready(&pipeline_cache, pipeline.pressure_solve_pipeline)
                 && pipeline_ready(&pipeline_cache, pipeline.velocity_project_pipeline)
+                && pipeline_ready(&pipeline_cache, pipeline.density_visualize_pipeline)
             {
                 *state = FluidSimState::Update;
             }
@@ -1052,6 +1104,13 @@ fn fluid_simulation(
             advect_density(
                 &pipeline_cache,
                 &mut buffers,
+                &mut render_context,
+                &pipeline,
+                &bind_groups,
+            );
+            visualize_density(
+                &pipeline_cache,
+                &buffers,
                 &mut render_context,
                 &pipeline,
                 &bind_groups,
@@ -1291,6 +1350,30 @@ fn advect_density(
         1,
     );
     buffers.density.swap();
+}
+
+fn visualize_density(
+    pipeline_cache: &Res<PipelineCache>,
+    buffers: &ResMut<FluidSimBuffers>,
+    render_context: &mut RenderContext,
+    pipeline: &Res<FluidSimPipeline>,
+    bind_groups: &Res<FluidSimBindGroups>,
+) {
+    let visualize_pipeline = pipeline_cache
+        .get_compute_pipeline(pipeline.density_visualize_pipeline)
+        .unwrap();
+    let density_index = buffers.density.index();
+
+    let mut pass = render_context
+        .command_encoder()
+        .begin_compute_pass(&ComputePassDescriptor::default());
+    pass.set_pipeline(visualize_pipeline);
+    pass.set_bind_group(0, &bind_groups.density_visualize[density_index], &[]);
+    pass.dispatch_workgroups(
+        SIZE.x.div_ceil(WORKGROUP_SIZE),
+        SIZE.y.div_ceil(WORKGROUP_SIZE),
+        1,
+    );
 }
 
 fn project_velocity(

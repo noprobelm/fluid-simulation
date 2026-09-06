@@ -48,12 +48,18 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         let cursor = config.cursor_position;
         let grid_delta = (uv - cursor) * config.dimensions;
         let radius = 0.0125 * min(config.dimensions.x, config.dimensions.y);
+        let feather = 2.0;
+        let coverage = 1.0 - smoothstep(
+            radius - feather,
+            radius + feather,
+            length(grid_delta),
+        );
 
-        if (config.density_source_active != 0u && length(grid_delta) <= radius) {
-            density += config.cursor_density * config.time;
+        if (config.density_source_active != 0u) {
+            density += coverage * config.cursor_density * config.time;
         }
-        if (config.velocity_source_active != 0u && length(grid_delta) <= radius) {
-            velocity += config.cursor_velocity * config.time;
+        if (config.velocity_source_active != 0u) {
+            velocity += coverage * config.cursor_velocity * config.time;
         }
     }
 
