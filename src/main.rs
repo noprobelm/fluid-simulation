@@ -23,7 +23,7 @@ use bevy::{
         texture::GpuImage,
     },
     shader::ShaderCacheError,
-    window::WindowMode,
+    window::{PrimaryWindow, WindowMode},
 };
 use std::borrow::Cow;
 
@@ -41,7 +41,6 @@ const VELOCITY_PROJECT_SHADER: &str = "shaders/velocity_project.wgsl";
 const DENSITY_VISUALIZE_SHADER: &str = "shaders/density_visualize.wgsl";
 
 const DISPLAY_FACTOR: u32 = 1;
-const SIZE: UVec2 = UVec2::new((2560 / DISPLAY_FACTOR) + 2, (1440 / DISPLAY_FACTOR) + 2);
 const WORKGROUP_SIZE: u32 = 8;
 const DIFFUSION_ITERATIONS: usize = 20;
 const PRESSURE_SOLVE_ITERATIONS: usize = 20;
@@ -53,8 +52,8 @@ fn main() {
             DefaultPlugins
                 .set(WindowPlugin {
                     primary_window: Some(Window {
-                        resolution: (SIZE * DISPLAY_FACTOR).into(),
                         mode: WindowMode::BorderlessFullscreen(MonitorSelection::Primary),
+                        fit_canvas_to_parent: true,
                         ..default()
                     }),
                     ..default()
@@ -67,8 +66,15 @@ fn main() {
         .run();
 }
 
-fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
-    let mut density = Image::new_target_texture(SIZE.x, SIZE.y, TextureFormat::R32Float, None);
+fn setup(
+    mut commands: Commands,
+    mut images: ResMut<Assets<Image>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+) -> Result {
+    let window = windows.single()?;
+    let size = window.resolution.size().as_uvec2() / DISPLAY_FACTOR;
+
+    let mut density = Image::new_target_texture(size.x, size.y, TextureFormat::R32Float, None);
     density.asset_usage = RenderAssetUsages::RENDER_WORLD;
     density.texture_descriptor.usage = TextureUsages::COPY_SRC
         | TextureUsages::COPY_DST
@@ -79,7 +85,7 @@ fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     let density_current = images.add(density.clone());
     let density_next = images.add(density);
 
-    let mut velocity = Image::new_target_texture(SIZE.x, SIZE.y, TextureFormat::Rg32Float, None);
+    let mut velocity = Image::new_target_texture(size.x, size.y, TextureFormat::Rg32Float, None);
     velocity.asset_usage = RenderAssetUsages::RENDER_WORLD;
     velocity.texture_descriptor.usage = TextureUsages::COPY_SRC
         | TextureUsages::COPY_DST
@@ -90,20 +96,20 @@ fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
     let velocity_current = images.add(velocity.clone());
     let velocity_next = images.add(velocity);
 
-    let mut divergence = Image::new_target_texture(SIZE.x, SIZE.y, TextureFormat::R32Float, None);
+    let mut divergence = Image::new_target_texture(size.x, size.y, TextureFormat::R32Float, None);
     divergence.asset_usage = RenderAssetUsages::RENDER_WORLD;
     divergence.texture_descriptor.usage = TextureUsages::STORAGE_BINDING;
 
     let divergence = images.add(divergence);
 
-    let mut pressure = Image::new_target_texture(SIZE.x, SIZE.y, TextureFormat::R32Float, None);
+    let mut pressure = Image::new_target_texture(size.x, size.y, TextureFormat::R32Float, None);
     pressure.asset_usage = RenderAssetUsages::RENDER_WORLD;
     pressure.texture_descriptor.usage = TextureUsages::STORAGE_BINDING;
 
     let pressure_current = images.add(pressure.clone());
     let pressure_next = images.add(pressure);
 
-    let mut display = Image::new_target_texture(SIZE.x, SIZE.y, TextureFormat::Rgba16Float, None);
+    let mut display = Image::new_target_texture(size.x, size.y, TextureFormat::Rgba16Float, None);
     display.asset_usage = RenderAssetUsages::RENDER_WORLD;
     display.texture_descriptor.usage =
         TextureUsages::STORAGE_BINDING | TextureUsages::TEXTURE_BINDING;
@@ -128,23 +134,25 @@ fn setup(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
         cursor_velocity: Vec2::ZERO,
         cursor_density: 10.0,
         time: 0.0,
-        diff: 0.00005,
+        diff: 0.000001,
         visc: 0.00000001,
         density_source_active: 0,
         velocity_source_active: 0,
-        dimensions: SIZE.as_vec2(),
+        dimensions: size.as_vec2(),
     });
 
     commands.spawn((
         Sprite {
             image: display,
-            custom_size: Some(SIZE.as_vec2()),
+            custom_size: Some(size.as_vec2()),
             ..default()
         },
         Transform::from_scale(Vec3::splat(DISPLAY_FACTOR as f32)),
     ));
 
     commands.spawn(Camera2d);
+
+    Ok(())
 }
 
 struct FluidSimComputePlugin;
@@ -1033,8 +1041,11 @@ fn fluid_simulation(
     state: Res<FluidSimState>,
     gpu_images: Res<RenderAssets<GpuImage>>,
     fluid_sim_images: Res<FluidSimImages>,
+    uniforms: Res<FluidSimUniforms>,
     mut buffers: ResMut<FluidSimBuffers>,
 ) {
+    let size = uniforms.dimensions.as_uvec2();
+
     match *state {
         FluidSimState::Loading => {}
 
@@ -1050,14 +1061,15 @@ fn fluid_simulation(
             pass.set_pipeline(init_pipeline);
             pass.set_bind_group(0, &bind_groups.init, &[]);
             pass.dispatch_workgroups(
-                SIZE.x.div_ceil(WORKGROUP_SIZE),
-                SIZE.y.div_ceil(WORKGROUP_SIZE),
+                size.x.div_ceil(WORKGROUP_SIZE),
+                size.y.div_ceil(WORKGROUP_SIZE),
                 1,
             );
         }
 
         FluidSimState::Update => {
             add_sources(
+                size,
                 &pipeline_cache,
                 &mut buffers,
                 &mut render_context,
@@ -1065,12 +1077,14 @@ fn fluid_simulation(
                 &bind_groups,
             );
             copy_current_velocity(
+                size,
                 &gpu_images,
                 &fluid_sim_images,
                 &buffers,
                 &mut render_context,
             );
             diffuse_velocity(
+                size,
                 &pipeline_cache,
                 &mut buffers,
                 &mut render_context,
@@ -1078,6 +1092,7 @@ fn fluid_simulation(
                 &bind_groups,
             );
             project_velocity(
+                size,
                 &pipeline_cache,
                 &mut buffers,
                 &mut render_context,
@@ -1085,6 +1100,7 @@ fn fluid_simulation(
                 &bind_groups,
             );
             advect_velocity(
+                size,
                 &pipeline_cache,
                 &mut buffers,
                 &mut render_context,
@@ -1092,6 +1108,7 @@ fn fluid_simulation(
                 &bind_groups,
             );
             project_velocity(
+                size,
                 &pipeline_cache,
                 &mut buffers,
                 &mut render_context,
@@ -1099,12 +1116,14 @@ fn fluid_simulation(
                 &bind_groups,
             );
             copy_current_density(
+                size,
                 &gpu_images,
                 &fluid_sim_images,
                 &buffers,
                 &mut render_context,
             );
             diffuse_density(
+                size,
                 &pipeline_cache,
                 &mut buffers,
                 &mut render_context,
@@ -1112,6 +1131,7 @@ fn fluid_simulation(
                 &bind_groups,
             );
             advect_density(
+                size,
                 &pipeline_cache,
                 &mut buffers,
                 &mut render_context,
@@ -1119,6 +1139,7 @@ fn fluid_simulation(
                 &bind_groups,
             );
             visualize_density(
+                size,
                 &pipeline_cache,
                 &buffers,
                 &mut render_context,
@@ -1139,7 +1160,8 @@ fn update_cursor_input(
     let window = windows.single()?;
 
     if let Some(cursor_position) = window.cursor_position() {
-        let texture_size = SIZE.as_vec2() * DISPLAY_FACTOR as f32;
+        let size = uniforms.dimensions.as_uvec2();
+        let texture_size = size.as_vec2() * DISPLAY_FACTOR as f32;
         let texture_origin = (window.size() - texture_size) * 0.5;
         let relative = (cursor_position - texture_origin) / texture_size;
 
@@ -1165,10 +1187,10 @@ fn update_cursor_input(
 
 fn update_shader_time(time: Res<Time>, mut uniforms: ResMut<FluidSimUniforms>) {
     uniforms.time = time.delta().as_secs_f32();
-    uniforms.dimensions = SIZE.as_vec2();
 }
 
 fn add_sources(
+    size: UVec2,
     pipeline_cache: &Res<PipelineCache>,
     buffers: &mut ResMut<FluidSimBuffers>,
     render_context: &mut RenderContext,
@@ -1193,8 +1215,8 @@ fn add_sources(
         &[],
     );
     pass.dispatch_workgroups(
-        SIZE.x.div_ceil(WORKGROUP_SIZE),
-        SIZE.y.div_ceil(WORKGROUP_SIZE),
+        size.x.div_ceil(WORKGROUP_SIZE),
+        size.y.div_ceil(WORKGROUP_SIZE),
         1,
     );
     buffers.density.swap();
@@ -1202,6 +1224,7 @@ fn add_sources(
 }
 
 fn copy_current_velocity(
+    size: UVec2,
     gpu_images: &Res<RenderAssets<GpuImage>>,
     images: &Res<FluidSimImages>,
     buffers: &ResMut<FluidSimBuffers>,
@@ -1218,14 +1241,15 @@ fn copy_current_velocity(
         current.texture.as_image_copy(),
         original.texture.as_image_copy(),
         Extent3d {
-            width: SIZE.x,
-            height: SIZE.y,
+            width: size.x,
+            height: size.y,
             depth_or_array_layers: 1,
         },
     );
 }
 
 fn copy_current_density(
+    size: UVec2,
     gpu_images: &Res<RenderAssets<GpuImage>>,
     images: &Res<FluidSimImages>,
     buffers: &ResMut<FluidSimBuffers>,
@@ -1242,14 +1266,15 @@ fn copy_current_density(
         current.texture.as_image_copy(),
         original.texture.as_image_copy(),
         Extent3d {
-            width: SIZE.x,
-            height: SIZE.y,
+            width: size.x,
+            height: size.y,
             depth_or_array_layers: 1,
         },
     );
 }
 
 fn diffuse_density(
+    size: UVec2,
     pipeline_cache: &Res<PipelineCache>,
     buffers: &mut ResMut<FluidSimBuffers>,
     render_context: &mut RenderContext,
@@ -1270,8 +1295,8 @@ fn diffuse_density(
         let density_index = buffers.density.index();
         pass.set_bind_group(0, &bind_groups.density_diffuse[density_index], &[]);
         pass.dispatch_workgroups(
-            SIZE.x.div_ceil(WORKGROUP_SIZE),
-            SIZE.y.div_ceil(WORKGROUP_SIZE),
+            size.x.div_ceil(WORKGROUP_SIZE),
+            size.y.div_ceil(WORKGROUP_SIZE),
             1,
         );
         buffers.density.swap();
@@ -1279,6 +1304,7 @@ fn diffuse_density(
 }
 
 fn diffuse_velocity(
+    size: UVec2,
     pipeline_cache: &Res<PipelineCache>,
     buffers: &mut ResMut<FluidSimBuffers>,
     render_context: &mut RenderContext,
@@ -1299,8 +1325,8 @@ fn diffuse_velocity(
         let velocity_index = buffers.velocity.index();
         pass.set_bind_group(0, &bind_groups.velocity_diffuse[velocity_index], &[]);
         pass.dispatch_workgroups(
-            SIZE.x.div_ceil(WORKGROUP_SIZE),
-            SIZE.y.div_ceil(WORKGROUP_SIZE),
+            size.x.div_ceil(WORKGROUP_SIZE),
+            size.y.div_ceil(WORKGROUP_SIZE),
             1,
         );
         buffers.velocity.swap();
@@ -1308,6 +1334,7 @@ fn diffuse_velocity(
 }
 
 fn advect_velocity(
+    size: UVec2,
     pipeline_cache: &Res<PipelineCache>,
     buffers: &mut ResMut<FluidSimBuffers>,
     render_context: &mut RenderContext,
@@ -1325,14 +1352,15 @@ fn advect_velocity(
     pass.set_pipeline(advect_pipeline);
     pass.set_bind_group(0, &bind_groups.velocity_advect[velocity_index], &[]);
     pass.dispatch_workgroups(
-        SIZE.x.div_ceil(WORKGROUP_SIZE),
-        SIZE.y.div_ceil(WORKGROUP_SIZE),
+        size.x.div_ceil(WORKGROUP_SIZE),
+        size.y.div_ceil(WORKGROUP_SIZE),
         1,
     );
     buffers.velocity.swap();
 }
 
 fn advect_density(
+    size: UVec2,
     pipeline_cache: &Res<PipelineCache>,
     buffers: &mut ResMut<FluidSimBuffers>,
     render_context: &mut RenderContext,
@@ -1355,14 +1383,15 @@ fn advect_density(
         &[],
     );
     pass.dispatch_workgroups(
-        SIZE.x.div_ceil(WORKGROUP_SIZE),
-        SIZE.y.div_ceil(WORKGROUP_SIZE),
+        size.x.div_ceil(WORKGROUP_SIZE),
+        size.y.div_ceil(WORKGROUP_SIZE),
         1,
     );
     buffers.density.swap();
 }
 
 fn visualize_density(
+    size: UVec2,
     pipeline_cache: &Res<PipelineCache>,
     buffers: &ResMut<FluidSimBuffers>,
     render_context: &mut RenderContext,
@@ -1380,13 +1409,14 @@ fn visualize_density(
     pass.set_pipeline(visualize_pipeline);
     pass.set_bind_group(0, &bind_groups.density_visualize[density_index], &[]);
     pass.dispatch_workgroups(
-        SIZE.x.div_ceil(WORKGROUP_SIZE),
-        SIZE.y.div_ceil(WORKGROUP_SIZE),
+        size.x.div_ceil(WORKGROUP_SIZE),
+        size.y.div_ceil(WORKGROUP_SIZE),
         1,
     );
 }
 
 fn project_velocity(
+    size: UVec2,
     pipeline_cache: &Res<PipelineCache>,
     buffers: &mut ResMut<FluidSimBuffers>,
     render_context: &mut RenderContext,
@@ -1404,8 +1434,8 @@ fn project_velocity(
         pass.set_pipeline(divergence_pipeline);
         pass.set_bind_group(0, &bind_groups.compute_divergence[velocity_index], &[]);
         pass.dispatch_workgroups(
-            SIZE.x.div_ceil(WORKGROUP_SIZE),
-            SIZE.y.div_ceil(WORKGROUP_SIZE),
+            size.x.div_ceil(WORKGROUP_SIZE),
+            size.y.div_ceil(WORKGROUP_SIZE),
             1,
         );
     }
@@ -1420,8 +1450,8 @@ fn project_velocity(
         pass.set_pipeline(divergence_set_bnd_pipeline);
         pass.set_bind_group(0, &bind_groups.divergence_set_bnd[velocity_index], &[]);
         pass.dispatch_workgroups(
-            SIZE.x.div_ceil(WORKGROUP_SIZE),
-            SIZE.y.div_ceil(WORKGROUP_SIZE),
+            size.x.div_ceil(WORKGROUP_SIZE),
+            size.y.div_ceil(WORKGROUP_SIZE),
             1,
         );
     }
@@ -1437,8 +1467,8 @@ fn project_velocity(
         for pressure_clear_bind_group in &bind_groups.pressure_clear {
             pass.set_bind_group(0, pressure_clear_bind_group, &[]);
             pass.dispatch_workgroups(
-                SIZE.x.div_ceil(WORKGROUP_SIZE),
-                SIZE.y.div_ceil(WORKGROUP_SIZE),
+                size.x.div_ceil(WORKGROUP_SIZE),
+                size.y.div_ceil(WORKGROUP_SIZE),
                 1,
             );
         }
@@ -1456,8 +1486,8 @@ fn project_velocity(
             let pressure_index = buffers.pressure.index();
             pass.set_bind_group(0, &bind_groups.pressure_solve[pressure_index], &[]);
             pass.dispatch_workgroups(
-                SIZE.x.div_ceil(WORKGROUP_SIZE),
-                SIZE.y.div_ceil(WORKGROUP_SIZE),
+                size.x.div_ceil(WORKGROUP_SIZE),
+                size.y.div_ceil(WORKGROUP_SIZE),
                 1,
             );
             buffers.pressure.swap();
@@ -1482,8 +1512,8 @@ fn project_velocity(
         &[],
     );
     pass.dispatch_workgroups(
-        SIZE.x.div_ceil(WORKGROUP_SIZE),
-        SIZE.y.div_ceil(WORKGROUP_SIZE),
+        size.x.div_ceil(WORKGROUP_SIZE),
+        size.y.div_ceil(WORKGROUP_SIZE),
         1,
     );
     buffers.velocity.swap();

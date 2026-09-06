@@ -59,7 +59,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
             density += coverage * config.cursor_density * config.time;
         }
         if (config.velocity_source_active != 0u) {
-            const VELOCITY_SOURCE_STRENGTH: f32 = 2.0;
+            const VELOCITY_SOURCE_STRENGTH: f32 = 10.0;
 
             velocity += coverage * config.cursor_velocity * config.time;
 
