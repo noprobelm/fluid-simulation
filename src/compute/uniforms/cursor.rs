@@ -1,10 +1,9 @@
 use bevy::prelude::*;
 use bevy_egui::EguiPrimaryContextPass;
 
-use crate::{
-    compute::{DisplayFactor, FluidSimUniforms},
-    ui::UiState,
-};
+use crate::{compute::DisplayFactor, ui::UiState};
+
+use super::AddSourcesUniforms;
 
 pub struct CursorPlugin;
 
@@ -22,7 +21,7 @@ fn update_cursor_input(
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     time: Res<Time>,
     display_factor: Res<DisplayFactor>,
-    mut uniforms: ResMut<FluidSimUniforms>,
+    mut uniforms: ResMut<AddSourcesUniforms>,
     mut previous_cursor_position: Local<Option<Vec2>>,
 ) -> Result {
     let window = windows.single()?;

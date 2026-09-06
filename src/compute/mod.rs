@@ -1,4 +1,5 @@
 mod resources;
+mod uniforms;
 
 use bevy::{
     asset::RenderAssetUsages,
@@ -19,6 +20,11 @@ use bevy::{
     window::PrimaryWindow,
 };
 use std::borrow::Cow;
+
+use self::uniforms::{
+    AddSourcesUniforms, AdvectionUniforms, DensityDiffuseUniforms, DimensionsUniforms,
+    VelocityDiffuseUniforms,
+};
 
 pub use resources::*;
 
@@ -45,10 +51,9 @@ impl Plugin for ComputePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<DisplayFactor>()
             .add_systems(Startup, setup)
-            .add_systems(Update, update_shader_time)
             .add_plugins((
+                uniforms::UniformsPlugin,
                 ExtractResourcePlugin::<FluidSimImages>::default(),
-                ExtractResourcePlugin::<FluidSimUniforms>::default(),
             ));
 
         let render_app = app.sub_app_mut(RenderApp);
@@ -107,20 +112,6 @@ struct FluidSimImages {
     pressure_current: Handle<Image>,
     pressure_next: Handle<Image>,
     display: Handle<Image>,
-}
-
-#[derive(Resource, Clone, ExtractResource, ShaderType)]
-pub struct FluidSimUniforms {
-    pub color: LinearRgba,
-    pub cursor_position: Vec2,
-    pub cursor_velocity: Vec2,
-    pub cursor_density: f32,
-    pub time: f32,
-    pub diff: f32,
-    pub visc: f32,
-    pub density_source_active: u32,
-    pub velocity_source_active: u32,
-    pub dimensions: Vec2,
 }
 
 #[derive(Resource)]
@@ -212,19 +203,6 @@ fn setup(
         display: display.clone(),
     });
 
-    commands.insert_resource(FluidSimUniforms {
-        color: LinearRgba::RED,
-        cursor_position: Vec2::ZERO,
-        cursor_velocity: Vec2::ZERO,
-        cursor_density: 10.0,
-        time: 0.0,
-        diff: 0.000001,
-        visc: 0.00000001,
-        density_source_active: 0,
-        velocity_source_active: 0,
-        dimensions: size.as_vec2(),
-    });
-
     commands.spawn((
         Sprite {
             image: display,
@@ -244,7 +222,11 @@ fn prepare_bind_groups(
     pipeline: Res<FluidSimPipeline>,
     gpu_images: Res<RenderAssets<GpuImage>>,
     fluid_sim_images: Res<FluidSimImages>,
-    fluid_sim_uniforms: Res<FluidSimUniforms>,
+    dimensions_uniforms: Res<DimensionsUniforms>,
+    add_sources_uniforms: Res<AddSourcesUniforms>,
+    advection_uniforms: Res<AdvectionUniforms>,
+    density_diffuse_uniforms: Res<DensityDiffuseUniforms>,
+    velocity_diffuse_uniforms: Res<VelocityDiffuseUniforms>,
     render_device: Res<RenderDevice>,
     pipeline_cache: Res<PipelineCache>,
     queue: Res<RenderQueue>,
@@ -263,8 +245,22 @@ fn prepare_bind_groups(
     let pressure_b = gpu_images.get(&fluid_sim_images.pressure_next).unwrap();
     let display = gpu_images.get(&fluid_sim_images.display).unwrap();
 
-    let mut uniform_buffer = UniformBuffer::from(fluid_sim_uniforms.into_inner());
-    uniform_buffer.write_buffer(&render_device, &queue);
+    let mut dimensions_uniform_buffer = UniformBuffer::from(dimensions_uniforms.into_inner());
+    dimensions_uniform_buffer.write_buffer(&render_device, &queue);
+
+    let mut add_sources_uniform_buffer = UniformBuffer::from(add_sources_uniforms.into_inner());
+    add_sources_uniform_buffer.write_buffer(&render_device, &queue);
+
+    let mut advection_uniform_buffer = UniformBuffer::from(advection_uniforms.into_inner());
+    advection_uniform_buffer.write_buffer(&render_device, &queue);
+
+    let mut density_diffuse_uniform_buffer =
+        UniformBuffer::from(density_diffuse_uniforms.into_inner());
+    density_diffuse_uniform_buffer.write_buffer(&render_device, &queue);
+
+    let mut velocity_diffuse_uniform_buffer =
+        UniformBuffer::from(velocity_diffuse_uniforms.into_inner());
+    velocity_diffuse_uniform_buffer.write_buffer(&render_device, &queue);
 
     let init_layout = pipeline_cache.get_bind_group_layout(&pipeline.init_bind_group_layout);
     let add_sources_layout =
@@ -304,7 +300,7 @@ fn prepare_bind_groups(
             &density_b.texture_view,
             &velocity_a.texture_view,
             &velocity_b.texture_view,
-            &uniform_buffer,
+            &dimensions_uniform_buffer,
         )),
     );
 
@@ -319,7 +315,7 @@ fn prepare_bind_groups(
                     &velocity_a.texture_view,
                     &density_b.texture_view,
                     &velocity_b.texture_view,
-                    &uniform_buffer,
+                    &add_sources_uniform_buffer,
                 )),
             ),
             render_device.create_bind_group(
@@ -330,7 +326,7 @@ fn prepare_bind_groups(
                     &velocity_b.texture_view,
                     &density_b.texture_view,
                     &velocity_a.texture_view,
-                    &uniform_buffer,
+                    &add_sources_uniform_buffer,
                 )),
             ),
         ],
@@ -343,7 +339,7 @@ fn prepare_bind_groups(
                     &velocity_a.texture_view,
                     &density_a.texture_view,
                     &velocity_b.texture_view,
-                    &uniform_buffer,
+                    &add_sources_uniform_buffer,
                 )),
             ),
             render_device.create_bind_group(
@@ -354,7 +350,7 @@ fn prepare_bind_groups(
                     &velocity_b.texture_view,
                     &density_a.texture_view,
                     &velocity_a.texture_view,
-                    &uniform_buffer,
+                    &add_sources_uniform_buffer,
                 )),
             ),
         ],
@@ -370,7 +366,7 @@ fn prepare_bind_groups(
                 &density_original.texture_view,
                 &density_a.texture_view,
                 &density_b.texture_view,
-                &uniform_buffer,
+                &density_diffuse_uniform_buffer,
             )),
         ),
         render_device.create_bind_group(
@@ -380,7 +376,7 @@ fn prepare_bind_groups(
                 &density_original.texture_view,
                 &density_b.texture_view,
                 &density_a.texture_view,
-                &uniform_buffer,
+                &density_diffuse_uniform_buffer,
             )),
         ),
     ];
@@ -395,7 +391,7 @@ fn prepare_bind_groups(
                 &velocity_original.texture_view,
                 &velocity_a.texture_view,
                 &velocity_b.texture_view,
-                &uniform_buffer,
+                &velocity_diffuse_uniform_buffer,
             )),
         ),
         render_device.create_bind_group(
@@ -405,7 +401,7 @@ fn prepare_bind_groups(
                 &velocity_original.texture_view,
                 &velocity_b.texture_view,
                 &velocity_a.texture_view,
-                &uniform_buffer,
+                &velocity_diffuse_uniform_buffer,
             )),
         ),
     ];
@@ -417,7 +413,7 @@ fn prepare_bind_groups(
             &BindGroupEntries::sequential((
                 &velocity_a.texture_view,
                 &velocity_b.texture_view,
-                &uniform_buffer,
+                &advection_uniform_buffer,
             )),
         ),
         render_device.create_bind_group(
@@ -426,7 +422,7 @@ fn prepare_bind_groups(
             &BindGroupEntries::sequential((
                 &velocity_b.texture_view,
                 &velocity_a.texture_view,
-                &uniform_buffer,
+                &advection_uniform_buffer,
             )),
         ),
     ];
@@ -442,7 +438,7 @@ fn prepare_bind_groups(
                     &density_a.texture_view,
                     &velocity_a.texture_view,
                     &density_b.texture_view,
-                    &uniform_buffer,
+                    &advection_uniform_buffer,
                 )),
             ),
             // density A + velocity B -> density B
@@ -453,7 +449,7 @@ fn prepare_bind_groups(
                     &density_a.texture_view,
                     &velocity_b.texture_view,
                     &density_b.texture_view,
-                    &uniform_buffer,
+                    &advection_uniform_buffer,
                 )),
             ),
         ],
@@ -466,7 +462,7 @@ fn prepare_bind_groups(
                     &density_b.texture_view,
                     &velocity_a.texture_view,
                     &density_a.texture_view,
-                    &uniform_buffer,
+                    &advection_uniform_buffer,
                 )),
             ),
             // density B + velocity B -> density A
@@ -477,7 +473,7 @@ fn prepare_bind_groups(
                     &density_b.texture_view,
                     &velocity_b.texture_view,
                     &density_a.texture_view,
-                    &uniform_buffer,
+                    &advection_uniform_buffer,
                 )),
             ),
         ],
@@ -490,7 +486,7 @@ fn prepare_bind_groups(
             &BindGroupEntries::sequential((
                 &velocity_a.texture_view,
                 &divergence.texture_view,
-                &uniform_buffer,
+                &dimensions_uniform_buffer,
             )),
         ),
         render_device.create_bind_group(
@@ -499,7 +495,7 @@ fn prepare_bind_groups(
             &BindGroupEntries::sequential((
                 &velocity_b.texture_view,
                 &divergence.texture_view,
-                &uniform_buffer,
+                &dimensions_uniform_buffer,
             )),
         ),
     ];
@@ -511,7 +507,7 @@ fn prepare_bind_groups(
             &BindGroupEntries::sequential((
                 &velocity_a.texture_view,
                 &divergence.texture_view,
-                &uniform_buffer,
+                &dimensions_uniform_buffer,
             )),
         ),
         render_device.create_bind_group(
@@ -520,7 +516,7 @@ fn prepare_bind_groups(
             &BindGroupEntries::sequential((
                 &velocity_b.texture_view,
                 &divergence.texture_view,
-                &uniform_buffer,
+                &dimensions_uniform_buffer,
             )),
         ),
     ];
@@ -529,12 +525,12 @@ fn prepare_bind_groups(
         render_device.create_bind_group(
             Some("clear pressure A"),
             &pressure_clear_layout,
-            &BindGroupEntries::sequential((&pressure_a.texture_view, &uniform_buffer)),
+            &BindGroupEntries::sequential((&pressure_a.texture_view, &dimensions_uniform_buffer)),
         ),
         render_device.create_bind_group(
             Some("clear pressure B"),
             &pressure_clear_layout,
-            &BindGroupEntries::sequential((&pressure_b.texture_view, &uniform_buffer)),
+            &BindGroupEntries::sequential((&pressure_b.texture_view, &dimensions_uniform_buffer)),
         ),
     ];
 
@@ -546,7 +542,7 @@ fn prepare_bind_groups(
                 &divergence.texture_view,
                 &pressure_a.texture_view,
                 &pressure_b.texture_view,
-                &uniform_buffer,
+                &dimensions_uniform_buffer,
             )),
         ),
         render_device.create_bind_group(
@@ -556,7 +552,7 @@ fn prepare_bind_groups(
                 &divergence.texture_view,
                 &pressure_b.texture_view,
                 &pressure_a.texture_view,
-                &uniform_buffer,
+                &dimensions_uniform_buffer,
             )),
         ),
     ];
@@ -570,7 +566,7 @@ fn prepare_bind_groups(
                     &pressure_a.texture_view,
                     &velocity_a.texture_view,
                     &velocity_b.texture_view,
-                    &uniform_buffer,
+                    &dimensions_uniform_buffer,
                 )),
             ),
             render_device.create_bind_group(
@@ -580,7 +576,7 @@ fn prepare_bind_groups(
                     &pressure_b.texture_view,
                     &velocity_a.texture_view,
                     &velocity_b.texture_view,
-                    &uniform_buffer,
+                    &dimensions_uniform_buffer,
                 )),
             ),
         ],
@@ -592,7 +588,7 @@ fn prepare_bind_groups(
                     &pressure_a.texture_view,
                     &velocity_b.texture_view,
                     &velocity_a.texture_view,
-                    &uniform_buffer,
+                    &dimensions_uniform_buffer,
                 )),
             ),
             render_device.create_bind_group(
@@ -602,7 +598,7 @@ fn prepare_bind_groups(
                     &pressure_b.texture_view,
                     &velocity_b.texture_view,
                     &velocity_a.texture_view,
-                    &uniform_buffer,
+                    &dimensions_uniform_buffer,
                 )),
             ),
         ],
@@ -680,7 +676,7 @@ fn init_fluid_sim_pipeline(
                 texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::WriteOnly),
                 texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::WriteOnly),
                 texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::WriteOnly),
-                uniform_buffer::<FluidSimUniforms>(false),
+                uniform_buffer::<DimensionsUniforms>(false),
             ),
         ),
     );
@@ -694,7 +690,7 @@ fn init_fluid_sim_pipeline(
                 texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::ReadOnly),
                 texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::WriteOnly),
                 texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::WriteOnly),
-                uniform_buffer::<FluidSimUniforms>(false),
+                uniform_buffer::<AddSourcesUniforms>(false),
             ),
         ),
     );
@@ -707,7 +703,7 @@ fn init_fluid_sim_pipeline(
                 texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::ReadOnly),
                 texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::ReadOnly),
                 texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::WriteOnly),
-                uniform_buffer::<FluidSimUniforms>(false),
+                uniform_buffer::<DensityDiffuseUniforms>(false),
             ),
         ),
     );
@@ -720,7 +716,7 @@ fn init_fluid_sim_pipeline(
                 texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::ReadOnly),
                 texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::ReadOnly),
                 texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::WriteOnly),
-                uniform_buffer::<FluidSimUniforms>(false),
+                uniform_buffer::<VelocityDiffuseUniforms>(false),
             ),
         ),
     );
@@ -732,7 +728,7 @@ fn init_fluid_sim_pipeline(
             (
                 texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::ReadOnly),
                 texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::WriteOnly),
-                uniform_buffer::<FluidSimUniforms>(false),
+                uniform_buffer::<AdvectionUniforms>(false),
             ),
         ),
     );
@@ -745,7 +741,7 @@ fn init_fluid_sim_pipeline(
                 texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::ReadOnly),
                 texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::ReadOnly),
                 texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::WriteOnly),
-                uniform_buffer::<FluidSimUniforms>(false),
+                uniform_buffer::<AdvectionUniforms>(false),
             ),
         ),
     );
@@ -757,7 +753,7 @@ fn init_fluid_sim_pipeline(
             (
                 texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::ReadOnly),
                 texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::WriteOnly),
-                uniform_buffer::<FluidSimUniforms>(false),
+                uniform_buffer::<DimensionsUniforms>(false),
             ),
         ),
     );
@@ -769,7 +765,7 @@ fn init_fluid_sim_pipeline(
             (
                 texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::ReadOnly),
                 texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::WriteOnly),
-                uniform_buffer::<FluidSimUniforms>(false),
+                uniform_buffer::<DimensionsUniforms>(false),
             ),
         ),
     );
@@ -780,7 +776,7 @@ fn init_fluid_sim_pipeline(
             ShaderStages::COMPUTE,
             (
                 texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::WriteOnly),
-                uniform_buffer::<FluidSimUniforms>(false),
+                uniform_buffer::<DimensionsUniforms>(false),
             ),
         ),
     );
@@ -793,7 +789,7 @@ fn init_fluid_sim_pipeline(
                 texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::ReadOnly),
                 texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::ReadOnly),
                 texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::WriteOnly),
-                uniform_buffer::<FluidSimUniforms>(false),
+                uniform_buffer::<DimensionsUniforms>(false),
             ),
         ),
     );
@@ -806,7 +802,7 @@ fn init_fluid_sim_pipeline(
                 texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::ReadOnly),
                 texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::ReadOnly),
                 texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::WriteOnly),
-                uniform_buffer::<FluidSimUniforms>(false),
+                uniform_buffer::<DimensionsUniforms>(false),
             ),
         ),
     );
@@ -1018,7 +1014,7 @@ fn fluid_simulation(
     state: Res<FluidSimState>,
     gpu_images: Res<RenderAssets<GpuImage>>,
     fluid_sim_images: Res<FluidSimImages>,
-    uniforms: Res<FluidSimUniforms>,
+    uniforms: Res<DimensionsUniforms>,
     mut buffers: ResMut<FluidSimBuffers>,
 ) {
     let size = uniforms.dimensions.as_uvec2();
@@ -1125,10 +1121,6 @@ fn fluid_simulation(
             );
         }
     }
-}
-
-fn update_shader_time(time: Res<Time>, mut uniforms: ResMut<FluidSimUniforms>) {
-    uniforms.time = time.delta().as_secs_f32();
 }
 
 fn add_sources(

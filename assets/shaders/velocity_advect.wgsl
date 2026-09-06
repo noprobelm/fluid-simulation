@@ -1,13 +1,5 @@
-struct FluidSimulationUniforms {
-    color: vec4<f32>,
-    cursor_position: vec2<f32>,
-    cursor_velocity: vec2<f32>,
-    cursor_density: f32,
-    time: f32,
-    diff: f32,
-    visc: f32,
-    density_source_active: u32,
-    velocity_source_active: u32,
+struct AdvectionUniforms {
+    dt: f32,
     dimensions: vec2<f32>,
 };
 
@@ -18,15 +10,15 @@ var velocity_in: texture_storage_2d<rg32float, read>;
 var velocity_out: texture_storage_2d<rg32float, write>;
 
 @group(0) @binding(2)
-var<uniform> config: FluidSimulationUniforms;
+var<uniform> config: AdvectionUniforms;
 
 fn advected_velocity_at(p: vec2<i32>) -> vec2<f32> {
     let n = max(config.dimensions - vec2<f32>(2.0), vec2<f32>(1.0));
 
     let velocity = velocity_at(p);
 
-    var x = f32(p.x) - config.time * n.x * velocity.x;
-    var y = f32(p.y) - config.time * n.y * velocity.y;
+    var x = f32(p.x) - config.dt * n.x * velocity.x;
+    var y = f32(p.y) - config.dt * n.y * velocity.y;
 
     x = clamp(x, 0.5, n.x + 0.5);
     y = clamp(y, 0.5, n.y + 0.5);

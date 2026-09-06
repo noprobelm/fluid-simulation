@@ -1,13 +1,4 @@
-struct FluidSimulationUniforms {
-    color: vec4<f32>,
-    cursor_position: vec2<f32>,
-    cursor_velocity: vec2<f32>,
-    cursor_density: f32,
-    time: f32,
-    diff: f32,
-    visc: f32,
-    density_source_active: u32,
-    velocity_source_active: u32,
+struct DimensionsUniforms {
     dimensions: vec2<f32>,
 };
 
@@ -22,7 +13,7 @@ var velocity_in: texture_storage_2d<rg32float, read>;
 var velocity_out: texture_storage_2d<rg32float, write>;
 
 @group(0) @binding(3)
-var<uniform> config: FluidSimulationUniforms;
+var<uniform> config: DimensionsUniforms;
 
 fn projected_velocity_at(p: vec2<i32>) -> vec2<f32> {
     let n = max(config.dimensions - vec2<f32>(2.0), vec2<f32>(1.0));

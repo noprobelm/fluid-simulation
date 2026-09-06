@@ -1,13 +1,6 @@
-struct FluidSimulationUniforms {
-    color: vec4<f32>,
-    cursor_position: vec2<f32>,
-    cursor_velocity: vec2<f32>,
-    cursor_density: f32,
-    time: f32,
-    diff: f32,
+struct VelocityDiffuseUniforms {
+    dt: f32,
     visc: f32,
-    density_source_active: u32,
-    velocity_source_active: u32,
     dimensions: vec2<f32>,
 };
 
@@ -21,7 +14,7 @@ var velocity_in: texture_storage_2d<rg32float, read>;
 var velocity_out: texture_storage_2d<rg32float, write>;
 
 @group(0) @binding(3)
-var<uniform> config: FluidSimulationUniforms;
+var<uniform> config: VelocityDiffuseUniforms;
 
 fn velocity_at(p: vec2<i32>) -> vec2<f32> {
     return textureLoad(velocity_in, p).rg;
@@ -80,7 +73,7 @@ if (p.y == height - 1) {
 }
 
     let n = max(config.dimensions - vec2<f32>(2.0), vec2<f32>(1.0));
-    let a = config.time * config.visc * n * n;
+    let a = config.dt * config.visc * n * n;
 
     let source = textureLoad(velocity_original, p).rg;
     let left = velocity_at(p + vec2<i32>(-1, 0));
@@ -93,4 +86,3 @@ if (p.y == height - 1) {
 
     textureStore(velocity_out, p, vec4<f32>(velocity, 0.0, 0.0));
 }
-

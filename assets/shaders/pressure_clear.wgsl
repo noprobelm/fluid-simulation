@@ -1,13 +1,4 @@
-struct FluidSimulationUniforms {
-    color: vec4<f32>,
-    cursor_position: vec2<f32>,
-    cursor_velocity: vec2<f32>,
-    cursor_density: f32,
-    time: f32,
-    diff: f32,
-    visc: f32,
-    density_source_active: u32,
-    velocity_source_active: u32,
+struct DimensionsUniforms {
     dimensions: vec2<f32>,
 };
 
@@ -15,7 +6,7 @@ struct FluidSimulationUniforms {
 var pressure_out: texture_storage_2d<r32float, write>;
 
 @group(0) @binding(1)
-var<uniform> config: FluidSimulationUniforms;
+var<uniform> config: DimensionsUniforms;
 
 @compute
 @workgroup_size(8, 8, 1)

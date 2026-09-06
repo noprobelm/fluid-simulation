@@ -8,12 +8,11 @@
 //! use Jacobi iteration for diffusion and pressure solutions, as this felt more conducive to
 //! compute shader architecture than Stam's Gauss-Seidel relaxation approach.
 mod compute;
-mod cursor;
 mod ui;
 
 use bevy::{prelude::*, window::WindowMode};
 
-use crate::{compute::ComputePlugin, cursor::CursorPlugin, ui::UiPlugin};
+use crate::{compute::ComputePlugin, ui::UiPlugin};
 
 fn main() {
     App::new()
@@ -31,7 +30,6 @@ fn main() {
                 .set(ImagePlugin::default_nearest()),
             ComputePlugin,
             UiPlugin,
-            CursorPlugin,
         ))
         .run();
 }

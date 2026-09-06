@@ -1,14 +1,11 @@
-struct FluidSimulationUniforms {
-    color: vec4<f32>,
+struct AddSourcesUniforms {
+    dt: f32,
+    dimensions: vec2<f32>,
     cursor_position: vec2<f32>,
     cursor_velocity: vec2<f32>,
     cursor_density: f32,
-    time: f32,
-    diff: f32,
-    visc: f32,
     density_source_active: u32,
     velocity_source_active: u32,
-    dimensions: vec2<f32>,
 };
 
 @group(0) @binding(0)
@@ -24,7 +21,7 @@ var density_out: texture_storage_2d<r32float, write>;
 var velocity_out: texture_storage_2d<rg32float, write>;
 
 @group(0) @binding(4)
-var<uniform> config: FluidSimulationUniforms;
+var<uniform> config: AddSourcesUniforms;
 
 fn is_boundary(p: vec2<i32>) -> bool {
     let width = i32(config.dimensions.x);
@@ -56,16 +53,16 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         );
 
         if (config.density_source_active != 0u) {
-            density += coverage * config.cursor_density * config.time;
+            density += coverage * config.cursor_density * config.dt;
         }
         if (config.velocity_source_active != 0u) {
             const VELOCITY_SOURCE_STRENGTH: f32 = 10.0;
 
-            velocity += coverage * config.cursor_velocity * config.time;
+            velocity += coverage * config.cursor_velocity * config.dt;
 
             velocity += coverage
                 * config.cursor_velocity
-                * config.time
+                * config.dt
                 * VELOCITY_SOURCE_STRENGTH;
                     }
                 }

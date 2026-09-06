@@ -1,13 +1,6 @@
-struct FluidSimulationUniforms {
-    color: vec4<f32>,
-    cursor_position: vec2<f32>,
-    cursor_velocity: vec2<f32>,
-    cursor_density: f32,
-    time: f32,
+struct DensityDiffuseUniforms {
+    dt: f32,
     diff: f32,
-    visc: f32,
-    density_source_active: u32,
-    velocity_source_active: u32,
     dimensions: vec2<f32>,
 };
 
@@ -21,7 +14,7 @@ var density_in: texture_storage_2d<r32float, read>;
 var density_out: texture_storage_2d<r32float, write>;
 
 @group(0) @binding(3)
-var<uniform> config: FluidSimulationUniforms;
+var<uniform> config: DensityDiffuseUniforms;
 
 fn density_at(p: vec2<i32>) -> f32 {
     return textureLoad(density_in, p).r;
@@ -33,7 +26,7 @@ fn source_at(p: vec2<i32>) -> f32 {
 
 fn diffuse_density_at(p: vec2<i32>) -> f32 {
     let n = max(config.dimensions.x - 2.0, 1.0);
-    let a = config.time * config.diff * n * n;
+    let a = config.dt * config.diff * n * n;
 
     let source = source_at(p);
 
@@ -94,5 +87,4 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         vec4<f32>(density, 0.0, 0.0, 0.0),
     );
 }
-
 
