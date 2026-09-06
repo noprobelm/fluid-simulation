@@ -22,11 +22,10 @@ use bevy::{
 };
 use std::borrow::Cow;
 
-pub use crate::compute::uniforms::DensityVisualizeUniforms;
+pub use crate::compute::uniforms::{AddSourcesUniforms, DensityVisualizeUniforms};
 
 use self::uniforms::{
-    AddSourcesUniforms, AdvectionUniforms, DensityDiffuseUniforms, DimensionsUniforms,
-    VelocityDiffuseUniforms,
+    AdvectionUniforms, DensityDiffuseUniforms, DimensionsUniforms, VelocityDiffuseUniforms,
 };
 
 pub use resources::*;

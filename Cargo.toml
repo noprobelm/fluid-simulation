@@ -55,6 +55,7 @@ default-features = false
 [package.metadata.bevy_cli.web]
 # Disable native features for web builds.
 default-features = false
+features = ["bevy/webgpu"]
 
 [package.metadata.bevy_cli.web.dev]
 features = ["dev"]

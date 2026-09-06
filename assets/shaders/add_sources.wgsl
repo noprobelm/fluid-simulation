@@ -5,6 +5,8 @@ struct AddSourcesUniforms {
     previous_cursor_position: vec2<f32>,
     cursor_velocity: vec2<f32>,
     cursor_density: f32,
+    density_radius: f32,
+    velocity_radius: f32,
     density_source_active: u32,
     velocity_source_active: u32,
     density_stroke_continuous: u32,
@@ -46,7 +48,7 @@ fn is_boundary(p: vec2<i32>) -> bool {
     return p.x == 0 || p.y == 0 || p.x == width - 1 || p.y == height - 1;
 }
 
-fn stroke_coverage(pixel: vec2<f32>, stroke_continuous: u32) -> f32 {
+fn stroke_coverage(pixel: vec2<f32>, stroke_continuous: u32, normalized_radius: f32) -> f32 {
     let cursor = config.cursor_position * config.dimensions;
     let previous_cursor = select(
         cursor,
@@ -61,7 +63,7 @@ fn stroke_coverage(pixel: vec2<f32>, stroke_continuous: u32) -> f32 {
         1.0,
     );
     let distance_to_stroke = length(pixel - (previous_cursor + t * segment));
-    let radius = 0.0125 * min(config.dimensions.x, config.dimensions.y);
+    let radius = normalized_radius * min(config.dimensions.x, config.dimensions.y);
     let feather = 2.0;
 
     return 1.0 - smoothstep(radius - feather, radius + feather, distance_to_stroke);
@@ -83,14 +85,22 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         let pixel = vec2<f32>(id.xy) + vec2<f32>(0.5);
 
         if (config.density_source_active != 0u) {
-            let coverage = stroke_coverage(pixel, config.density_stroke_continuous);
+            let coverage = stroke_coverage(
+                pixel,
+                config.density_stroke_continuous,
+                config.density_radius,
+            );
             let added_density = coverage * config.cursor_density * config.dt;
             density += added_density;
             dye += visualization.color.rgb * added_density;
         }
         if (config.velocity_source_active != 0u) {
             const VELOCITY_SOURCE_STRENGTH: f32 = 10.0;
-            let coverage = stroke_coverage(pixel, config.velocity_stroke_continuous);
+            let coverage = stroke_coverage(
+                pixel,
+                config.velocity_stroke_continuous,
+                config.velocity_radius,
+            );
             velocity += coverage
                 * config.cursor_velocity
                 * config.dt

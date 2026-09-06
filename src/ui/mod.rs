@@ -6,7 +6,7 @@ use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 use signals::*;
 pub use states::*;
 
-use crate::compute::{DensityVisualizeUniforms, Iterations, ResetSimulation};
+use crate::compute::{AddSourcesUniforms, DensityVisualizeUniforms, Iterations, ResetSimulation};
 
 pub(super) struct UiPlugin;
 
@@ -26,6 +26,7 @@ struct ShowUi;
 
 fn show(
     mut contexts: EguiContexts,
+    mut sources: ResMut<AddSourcesUniforms>,
     mut vis: ResMut<DensityVisualizeUniforms>,
     mut iterations: ResMut<Iterations>,
     mut reset: ResMut<ResetSimulation>,
@@ -42,6 +43,15 @@ fn show(
                     reset.generation = reset.generation.wrapping_add(1);
                 }
             });
+
+            egui::CollapsingHeader::new("Sources")
+                .default_open(true)
+                .show(ui, |ui| {
+                    egui::Grid::new("sources_grid")
+                        .num_columns(2)
+                        .spacing(egui::vec2(40.0, ui.spacing().item_spacing.y))
+                        .show(ui, |ui| show_source_controls(ui, &mut sources));
+                });
 
             egui::CollapsingHeader::new("Visuals")
                 .default_open(true)
@@ -62,6 +72,16 @@ fn show(
                 });
         });
     Ok(())
+}
+
+fn show_source_controls(ui: &mut egui::Ui, sources: &mut ResMut<AddSourcesUniforms>) {
+    ui.label("Density Radius");
+    ui.add(egui::Slider::new(&mut sources.density_radius, 0.001..=0.1));
+    ui.end_row();
+
+    ui.label("Velocity Radius");
+    ui.add(egui::Slider::new(&mut sources.velocity_radius, 0.001..=0.1));
+    ui.end_row();
 }
 
 fn show_vis(ui: &mut egui::Ui, vis: &mut ResMut<DensityVisualizeUniforms>) {
