@@ -1,4 +1,5 @@
 mod resources;
+mod signals;
 mod uniforms;
 
 use bevy::{
@@ -29,6 +30,7 @@ use self::uniforms::{
 };
 
 pub use resources::*;
+pub use signals::*;
 
 const INIT_SHADER: &str = "shaders/init.wgsl";
 const ADD_SOURCES_SHADER: &str = "shaders/add_sources.wgsl";
@@ -54,6 +56,7 @@ impl Plugin for ComputePlugin {
         app.init_resource::<DisplayFactor>()
             .add_systems(Startup, setup)
             .add_plugins((
+                signals::SignalsPlugin,
                 uniforms::UniformsPlugin,
                 ExtractResourcePlugin::<FluidSimImages>::default(),
             ));
@@ -100,6 +103,7 @@ struct FluidSimBuffers {
     density: PingPong,
     velocity: PingPong,
     pressure: PingPong,
+    reset_generation: u64,
 }
 
 #[derive(Resource, Clone, ExtractResource)]
@@ -1032,6 +1036,7 @@ fn fluid_simulation(
     fluid_sim_images: Res<FluidSimImages>,
     uniforms: Res<DimensionsUniforms>,
     mut buffers: ResMut<FluidSimBuffers>,
+    reset: Res<ResetSimulation>,
 ) {
     let size = uniforms.dimensions.as_uvec2();
 
@@ -1054,9 +1059,33 @@ fn fluid_simulation(
                 size.y.div_ceil(WORKGROUP_SIZE),
                 1,
             );
+            buffers.reset_generation = reset.generation;
         }
 
         FluidSimState::Update => {
+            if buffers.reset_generation != reset.generation {
+                let init_pipeline = pipeline_cache
+                    .get_compute_pipeline(pipeline.init_pipeline)
+                    .unwrap();
+                let mut pass = render_context
+                    .command_encoder()
+                    .begin_compute_pass(&ComputePassDescriptor::default());
+
+                pass.set_pipeline(init_pipeline);
+                pass.set_bind_group(0, &bind_groups.init, &[]);
+                pass.dispatch_workgroups(
+                    size.x.div_ceil(WORKGROUP_SIZE),
+                    size.y.div_ceil(WORKGROUP_SIZE),
+                    1,
+                );
+
+                *buffers = FluidSimBuffers {
+                    reset_generation: reset.generation,
+                    ..default()
+                };
+                return;
+            }
+
             add_sources(
                 size,
                 &pipeline_cache,
