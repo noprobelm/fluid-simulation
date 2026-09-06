@@ -1,12 +1,20 @@
 [package]
 name = "fluid_simulation"
-authors = ["noprobelm <noprobelm@protonmail.com>"]
+authors = ["Jeff Barfield <jbarfield@fastmail.com>"]
+license = "MIT OR Apache-2.0"
 version = "0.1.0"
 edition = "2024"
+readme = "README.md"
+categories = ["simulation", "game-development"]
+keywords = ["simulation", "particles", "fluid", "jos stam", "fluid dynamics"]
 
 [dependencies]
 # Use only features needed for a 2D game to improve compile time and size
-bevy = { version = "0.19", default-features = false, features = ["2d", "ui", "audio"] }
+bevy = { version = "0.19", default-features = false, features = [
+    "2d",
+    "ui",
+    "audio",
+] }
 rand = "0.9"
 # Compile out low-severity logs to improve performance.
 # Remove these features if you want to profile your game with tracy.
