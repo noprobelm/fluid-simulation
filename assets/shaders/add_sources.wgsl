@@ -11,6 +11,11 @@ struct AddSourcesUniforms {
     velocity_stroke_continuous: u32,
 };
 
+struct DensityVisualizeUniforms {
+    color: vec4<f32>,
+    fluid_intensity_scale: f32,
+};
+
 @group(0) @binding(0)
 var density_in: texture_storage_2d<r32float, read>;
 
@@ -18,13 +23,22 @@ var density_in: texture_storage_2d<r32float, read>;
 var velocity_in: texture_storage_2d<rg32float, read>;
 
 @group(0) @binding(2)
-var density_out: texture_storage_2d<r32float, write>;
+var dye_in: texture_storage_2d<rgba16float, read>;
 
 @group(0) @binding(3)
-var velocity_out: texture_storage_2d<rg32float, write>;
+var density_out: texture_storage_2d<r32float, write>;
 
 @group(0) @binding(4)
+var velocity_out: texture_storage_2d<rg32float, write>;
+
+@group(0) @binding(5)
+var dye_out: texture_storage_2d<rgba16float, write>;
+
+@group(0) @binding(6)
 var<uniform> config: AddSourcesUniforms;
+
+@group(0) @binding(7)
+var<uniform> visualization: DensityVisualizeUniforms;
 
 fn is_boundary(p: vec2<i32>) -> bool {
     let width = i32(config.dimensions.x);
@@ -63,13 +77,16 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let p = vec2<i32>(id.xy);
     var density = textureLoad(density_in, p).r;
     var velocity = textureLoad(velocity_in, p).rg;
+    var dye = textureLoad(dye_in, p).rgb;
 
     if (!is_boundary(p)) {
         let pixel = vec2<f32>(id.xy) + vec2<f32>(0.5);
 
         if (config.density_source_active != 0u) {
             let coverage = stroke_coverage(pixel, config.density_stroke_continuous);
-            density += coverage * config.cursor_density * config.dt;
+            let added_density = coverage * config.cursor_density * config.dt;
+            density += added_density;
+            dye += visualization.color.rgb * added_density;
         }
         if (config.velocity_source_active != 0u) {
             const VELOCITY_SOURCE_STRENGTH: f32 = 10.0;
@@ -83,4 +100,5 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 
     textureStore(density_out, p, vec4<f32>(density, 0.0, 0.0, 0.0));
     textureStore(velocity_out, p, vec4<f32>(velocity, 0.0, 0.0));
+    textureStore(dye_out, p, vec4<f32>(dye, 0.0));
 }

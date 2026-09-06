@@ -49,6 +49,10 @@ const WORKGROUP_SIZE: u32 = 8;
 const DIFFUSION_ITERATIONS: usize = 20;
 const PRESSURE_SOLVE_ITERATIONS: usize = 20;
 
+// Density and dye share a ping-pong index outside the density diffusion pass. This need to be an
+// even number.
+const _: () = assert!(DIFFUSION_ITERATIONS.is_multiple_of(2));
+
 pub struct ComputePlugin;
 
 impl Plugin for ComputePlugin {
@@ -101,6 +105,7 @@ impl PingPong {
 #[derive(Clone, Resource, Default)]
 struct FluidSimBuffers {
     density: PingPong,
+    dye: PingPong,
     velocity: PingPong,
     pressure: PingPong,
     reset_generation: u64,
@@ -111,6 +116,8 @@ struct FluidSimImages {
     density_original: Handle<Image>,
     density_current: Handle<Image>,
     density_next: Handle<Image>,
+    dye_current: Handle<Image>,
+    dye_next: Handle<Image>,
     velocity_original: Handle<Image>,
     velocity_current: Handle<Image>,
     velocity_next: Handle<Image>,
@@ -166,6 +173,13 @@ fn setup(
     let density_current = images.add(density.clone());
     let density_next = images.add(density);
 
+    let mut dye = Image::new_target_texture(size.x, size.y, TextureFormat::Rgba16Float, None);
+    dye.asset_usage = RenderAssetUsages::RENDER_WORLD;
+    dye.texture_descriptor.usage = TextureUsages::STORAGE_BINDING;
+
+    let dye_current = images.add(dye.clone());
+    let dye_next = images.add(dye);
+
     let mut velocity = Image::new_target_texture(size.x, size.y, TextureFormat::Rg32Float, None);
     velocity.asset_usage = RenderAssetUsages::RENDER_WORLD;
     velocity.texture_descriptor.usage = TextureUsages::COPY_SRC
@@ -200,6 +214,8 @@ fn setup(
         density_original,
         density_current: density_current.clone(),
         density_next: density_next.clone(),
+        dye_current,
+        dye_next,
         velocity_original,
         velocity_current,
         velocity_next,
@@ -241,6 +257,9 @@ fn prepare_bind_groups(
     let density_original = gpu_images.get(&fluid_sim_images.density_original).unwrap();
     let density_a = gpu_images.get(&fluid_sim_images.density_current).unwrap();
     let density_b = gpu_images.get(&fluid_sim_images.density_next).unwrap();
+
+    let dye_a = gpu_images.get(&fluid_sim_images.dye_current).unwrap();
+    let dye_b = gpu_images.get(&fluid_sim_images.dye_next).unwrap();
 
     let velocity_original = gpu_images.get(&fluid_sim_images.velocity_original).unwrap();
     let velocity_a = gpu_images.get(&fluid_sim_images.velocity_current).unwrap();
@@ -300,22 +319,28 @@ fn prepare_bind_groups(
     // init.wgsl:
     //   0 density_a (write)
     //   1 density_b (write)
-    //   2 velocity_a (write)
-    //   3 velocity_b (write)
-    //   4 config
+    //   2 dye_a (write)
+    //   3 dye_b (write)
+    //   4 velocity_a (write)
+    //   5 velocity_b (write)
+    //   6 display (write)
+    //   7 config
     let init = render_device.create_bind_group(
         Some("fluid init bind group"),
         &init_layout,
         &BindGroupEntries::sequential((
             &density_a.texture_view,
             &density_b.texture_view,
+            &dye_a.texture_view,
+            &dye_b.texture_view,
             &velocity_a.texture_view,
             &velocity_b.texture_view,
+            &display.texture_view,
             &dimensions_uniform_buffer,
         )),
     );
 
-    // add_sources[density][velocity]: each field's current texture -> its other texture
+    // add_sources[density/dye][velocity]: each field's current texture -> its other texture
     let add_sources = [
         [
             render_device.create_bind_group(
@@ -324,9 +349,12 @@ fn prepare_bind_groups(
                 &BindGroupEntries::sequential((
                     &density_a.texture_view,
                     &velocity_a.texture_view,
+                    &dye_a.texture_view,
                     &density_b.texture_view,
                     &velocity_b.texture_view,
+                    &dye_b.texture_view,
                     &add_sources_uniform_buffer,
+                    &density_visualize_uniform_buffer,
                 )),
             ),
             render_device.create_bind_group(
@@ -335,9 +363,12 @@ fn prepare_bind_groups(
                 &BindGroupEntries::sequential((
                     &density_a.texture_view,
                     &velocity_b.texture_view,
+                    &dye_a.texture_view,
                     &density_b.texture_view,
                     &velocity_a.texture_view,
+                    &dye_b.texture_view,
                     &add_sources_uniform_buffer,
+                    &density_visualize_uniform_buffer,
                 )),
             ),
         ],
@@ -348,9 +379,12 @@ fn prepare_bind_groups(
                 &BindGroupEntries::sequential((
                     &density_b.texture_view,
                     &velocity_a.texture_view,
+                    &dye_b.texture_view,
                     &density_a.texture_view,
                     &velocity_b.texture_view,
+                    &dye_a.texture_view,
                     &add_sources_uniform_buffer,
+                    &density_visualize_uniform_buffer,
                 )),
             ),
             render_device.create_bind_group(
@@ -359,9 +393,12 @@ fn prepare_bind_groups(
                 &BindGroupEntries::sequential((
                     &density_b.texture_view,
                     &velocity_b.texture_view,
+                    &dye_b.texture_view,
                     &density_a.texture_view,
                     &velocity_a.texture_view,
+                    &dye_a.texture_view,
                     &add_sources_uniform_buffer,
+                    &density_visualize_uniform_buffer,
                 )),
             ),
         ],
@@ -438,7 +475,7 @@ fn prepare_bind_groups(
         ),
     ];
 
-    // density_advect[density][velocity]
+    // density_advect[density/dye][velocity]
     let density_advect = [
         [
             // density A + velocity A -> density B
@@ -447,8 +484,10 @@ fn prepare_bind_groups(
                 &density_advect_layout,
                 &BindGroupEntries::sequential((
                     &density_a.texture_view,
+                    &dye_a.texture_view,
                     &velocity_a.texture_view,
                     &density_b.texture_view,
+                    &dye_b.texture_view,
                     &advection_uniform_buffer,
                 )),
             ),
@@ -458,8 +497,10 @@ fn prepare_bind_groups(
                 &density_advect_layout,
                 &BindGroupEntries::sequential((
                     &density_a.texture_view,
+                    &dye_a.texture_view,
                     &velocity_b.texture_view,
                     &density_b.texture_view,
+                    &dye_b.texture_view,
                     &advection_uniform_buffer,
                 )),
             ),
@@ -471,8 +512,10 @@ fn prepare_bind_groups(
                 &density_advect_layout,
                 &BindGroupEntries::sequential((
                     &density_b.texture_view,
+                    &dye_b.texture_view,
                     &velocity_a.texture_view,
                     &density_a.texture_view,
+                    &dye_a.texture_view,
                     &advection_uniform_buffer,
                 )),
             ),
@@ -482,8 +525,10 @@ fn prepare_bind_groups(
                 &density_advect_layout,
                 &BindGroupEntries::sequential((
                     &density_b.texture_view,
+                    &dye_b.texture_view,
                     &velocity_b.texture_view,
                     &density_a.texture_view,
+                    &dye_a.texture_view,
                     &advection_uniform_buffer,
                 )),
             ),
@@ -621,6 +666,7 @@ fn prepare_bind_groups(
             &density_visualize_layout,
             &BindGroupEntries::sequential((
                 &density_a.texture_view,
+                &dye_a.texture_view,
                 &display.texture_view,
                 &density_visualize_uniform_buffer,
             )),
@@ -630,6 +676,7 @@ fn prepare_bind_groups(
             &density_visualize_layout,
             &BindGroupEntries::sequential((
                 &density_b.texture_view,
+                &dye_b.texture_view,
                 &display.texture_view,
                 &density_visualize_uniform_buffer,
             )),
@@ -693,8 +740,11 @@ fn init_fluid_sim_pipeline(
             (
                 texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::WriteOnly),
                 texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::WriteOnly),
+                texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::WriteOnly),
+                texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::WriteOnly),
                 texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::WriteOnly),
                 texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::WriteOnly),
+                texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::WriteOnly),
                 uniform_buffer::<DimensionsUniforms>(false),
             ),
         ),
@@ -707,9 +757,12 @@ fn init_fluid_sim_pipeline(
             (
                 texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::ReadOnly),
                 texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::ReadOnly),
+                texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::ReadOnly),
                 texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::WriteOnly),
                 texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::WriteOnly),
+                texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::WriteOnly),
                 uniform_buffer::<AddSourcesUniforms>(false),
+                uniform_buffer::<DensityVisualizeUniforms>(false),
             ),
         ),
     );
@@ -758,8 +811,10 @@ fn init_fluid_sim_pipeline(
             ShaderStages::COMPUTE,
             (
                 texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::ReadOnly),
+                texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::ReadOnly),
                 texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::ReadOnly),
                 texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::WriteOnly),
+                texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::WriteOnly),
                 uniform_buffer::<AdvectionUniforms>(false),
             ),
         ),
@@ -832,6 +887,7 @@ fn init_fluid_sim_pipeline(
             ShaderStages::COMPUTE,
             (
                 texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::ReadOnly),
+                texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::ReadOnly),
                 texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::WriteOnly),
                 uniform_buffer::<DensityVisualizeUniforms>(false),
             ),
@@ -1199,6 +1255,7 @@ fn add_sources(
         1,
     );
     buffers.density.swap();
+    buffers.dye.swap();
     buffers.velocity.swap();
 }
 
@@ -1367,6 +1424,7 @@ fn advect_density(
         1,
     );
     buffers.density.swap();
+    buffers.dye.swap();
 }
 
 fn visualize_density(
@@ -1381,6 +1439,9 @@ fn visualize_density(
         .get_compute_pipeline(pipeline.density_visualize_pipeline)
         .unwrap();
     let density_index = buffers.density.index();
+    let dye_index = buffers.dye.index();
+
+    debug_assert_eq!(density_index, dye_index);
 
     let mut pass = render_context
         .command_encoder()
