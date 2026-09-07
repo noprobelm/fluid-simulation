@@ -1,6 +1,6 @@
 use bevy::{prelude::*, render::extract_resource::ExtractResource};
 
-#[derive(Copy, Clone, Resource)]
+#[derive(Copy, Clone, Eq, PartialEq, Resource)]
 pub struct DisplayFactor(pub u32);
 
 impl Default for DisplayFactor {

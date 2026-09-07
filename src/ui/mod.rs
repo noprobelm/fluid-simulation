@@ -74,14 +74,16 @@ fn show(
                         .show(ui, |ui| show_simulation_controls(ui, &mut iterations));
                 });
 
+            let mut original = display_factor.0;
             egui::CollapsingHeader::new("Resolution")
                 .default_open(false)
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.label("Display Factor");
-                        ui.add(egui::Slider::new(&mut display_factor.0, 1..=8));
+                        ui.add(egui::Slider::new(&mut original, 1..=8));
                     });
                 });
+            display_factor.set_if_neq(DisplayFactor(original));
         });
     Ok(())
 }

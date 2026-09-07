@@ -262,7 +262,7 @@ fn create_fluid_sim_images(images: &mut Assets<Image>, size: UVec2) -> FluidSimI
 }
 
 fn resize_simulation(
-    mut ev_window_resized: MessageReader<WindowResized>,
+    ev_window_resized: MessageReader<WindowResized>,
     windows: Query<&Window, With<PrimaryWindow>>,
     display_factor: Res<DisplayFactor>,
     mut images: ResMut<Assets<Image>>,
@@ -275,28 +275,30 @@ fn resize_simulation(
     mut velocity_diffuse: ResMut<VelocityDiffuseUniforms>,
     mut reset: ResMut<ResetSimulation>,
 ) {
-    ev_window_resized.read().for_each(|ev| {
-        let entity = ev.window;
-        let Ok(window) = windows.get(entity) else {
-            return;
-        };
-        let size = simulation_size(window, *display_factor);
+    let window_resized = !ev_window_resized.is_empty();
+    if !window_resized && !display_factor.is_changed() {
+        return;
+    }
 
-        let resized_images = create_fluid_sim_images(&mut images, size);
-        let (sprite, transform) = &mut *display;
-        sprite.image = resized_images.display.clone();
-        sprite.custom_size = Some(size.as_vec2());
-        transform.scale = Vec3::splat(display_factor.0 as f32);
-        *fluid_sim_images = resized_images;
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    let size = simulation_size(window, *display_factor);
 
-        let dimensions_vec = size.as_vec2();
-        dimensions.dimensions = dimensions_vec;
-        add_sources.dimensions = dimensions_vec;
-        advection.dimensions = dimensions_vec;
-        density_diffuse.dimensions = dimensions_vec;
-        velocity_diffuse.dimensions = dimensions_vec;
-        reset.generation = reset.generation.wrapping_add(1);
-    });
+    let resized_images = create_fluid_sim_images(&mut images, size);
+    let (sprite, transform) = &mut *display;
+    sprite.image = resized_images.display.clone();
+    sprite.custom_size = Some(size.as_vec2());
+    transform.scale = Vec3::splat(display_factor.0 as f32);
+    *fluid_sim_images = resized_images;
+
+    let dimensions_vec = size.as_vec2();
+    dimensions.dimensions = dimensions_vec;
+    add_sources.dimensions = dimensions_vec;
+    advection.dimensions = dimensions_vec;
+    density_diffuse.dimensions = dimensions_vec;
+    velocity_diffuse.dimensions = dimensions_vec;
+    reset.generation = reset.generation.wrapping_add(1);
 }
 
 fn prepare_bind_groups(
