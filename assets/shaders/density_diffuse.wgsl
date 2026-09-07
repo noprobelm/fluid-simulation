@@ -42,7 +42,7 @@ fn dye_source_at(p: vec2<i32>) -> vec3<f32> {
 }
 
 fn diffuse_density_at(p: vec2<i32>) -> f32 {
-    let n = max(config.dimensions.x - 2.0, 1.0);
+    let n = max(config.dimensions - vec2<f32>(2.0), vec2<f32>(1.0));
     let a = config.dt * config.diff * n * n;
 
     let source = source_at(p);
@@ -54,12 +54,13 @@ fn diffuse_density_at(p: vec2<i32>) -> f32 {
 
     return (
         source +
-        a * (left + right + down + up)
-    ) / (1.0 + 4.0 * a);
+        a.x * (left + right) +
+        a.y * (down + up)
+    ) / (1.0 + 2.0 * (a.x + a.y));
 }
 
 fn diffuse_dye_at(p: vec2<i32>) -> vec3<f32> {
-    let n = max(config.dimensions.x - 2.0, 1.0);
+    let n = max(config.dimensions - vec2<f32>(2.0), vec2<f32>(1.0));
     let a = config.dt * config.diff * n * n;
 
     let source = dye_source_at(p);
@@ -70,8 +71,9 @@ fn diffuse_dye_at(p: vec2<i32>) -> vec3<f32> {
 
     return (
         source +
-        a * (left + right + down + up)
-    ) / (1.0 + 4.0 * a);
+        a.x * (left + right) +
+        a.y * (down + up)
+    ) / (1.0 + 2.0 * (a.x + a.y));
 }
 
 @compute
