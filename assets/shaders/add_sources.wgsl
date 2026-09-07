@@ -19,13 +19,13 @@ struct DensityVisualizeUniforms {
 };
 
 @group(0) @binding(0)
-var density_in: texture_storage_2d<r32float, read>;
+var density_in: texture_2d<f32>;
 
 @group(0) @binding(1)
-var velocity_in: texture_storage_2d<rg32float, read>;
+var velocity_in: texture_2d<f32>;
 
 @group(0) @binding(2)
-var dye_in: texture_storage_2d<rgba16float, read>;
+var dye_in: texture_2d<f32>;
 
 @group(0) @binding(3)
 var density_out: texture_storage_2d<r32float, write>;
@@ -77,9 +77,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 
     let p = vec2<i32>(id.xy);
-    var density = textureLoad(density_in, p).r;
-    var velocity = textureLoad(velocity_in, p).rg;
-    var dye = textureLoad(dye_in, p).rgb;
+    var density = textureLoad(density_in, p, 0).r;
+    var velocity = textureLoad(velocity_in, p, 0).rg;
+    var dye = textureLoad(dye_in, p, 0).rgb;
 
     if (!is_boundary(p)) {
         let pixel = vec2<f32>(id.xy) + vec2<f32>(0.5);

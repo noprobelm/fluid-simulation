@@ -10,7 +10,11 @@
 mod compute;
 mod ui;
 
-use bevy::{prelude::*, window::WindowMode};
+use bevy::{
+    asset::{AssetMetaCheck, AssetPlugin},
+    prelude::*,
+    window::WindowMode,
+};
 
 use crate::{compute::ComputePlugin, ui::UiPlugin};
 
@@ -19,9 +23,13 @@ fn main() {
         .insert_resource(ClearColor(Color::BLACK))
         .add_plugins((
             DefaultPlugins
+                .set(AssetPlugin {
+                    meta_check: AssetMetaCheck::Never,
+                    ..default()
+                })
                 .set(WindowPlugin {
                     primary_window: Some(Window {
-                        mode: WindowMode::BorderlessFullscreen(MonitorSelection::Primary),
+                        mode: initial_window_mode(),
                         fit_canvas_to_parent: true,
                         ..default()
                     }),
@@ -32,4 +40,12 @@ fn main() {
             UiPlugin,
         ))
         .run();
+}
+
+fn initial_window_mode() -> WindowMode {
+    #[cfg(target_arch = "wasm32")]
+    return WindowMode::Windowed;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    return WindowMode::BorderlessFullscreen(MonitorSelection::Primary);
 }

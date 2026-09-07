@@ -11,7 +11,7 @@ use bevy::{
         extract_resource::{ExtractResource, ExtractResourcePlugin},
         render_asset::RenderAssets,
         render_resource::{
-            binding_types::{texture_storage_2d, uniform_buffer},
+            binding_types::{texture_2d, texture_storage_2d, uniform_buffer},
             *,
         },
         renderer::{RenderContext, RenderDevice, RenderGraph, RenderQueue},
@@ -32,6 +32,7 @@ pub use resources::*;
 pub use signals::*;
 
 const INIT_SHADER: &str = "shaders/init.wgsl";
+const INIT_VELOCITY_SHADER: &str = "shaders/init_velocity.wgsl";
 const ADD_SOURCES_SHADER: &str = "shaders/add_sources.wgsl";
 const DENSITY_DIFFUSE_SHADER: &str = "shaders/density_diffuse.wgsl";
 const DENSITY_ADVECT_SHADER: &str = "shaders/density_advect.wgsl";
@@ -125,7 +126,8 @@ struct FluidSimImages {
 
 #[derive(Resource)]
 struct FluidSimBindGroups {
-    init: BindGroup,
+    init_density_dye: BindGroup,
+    init_velocity_display: BindGroup,
 
     // [density ping-pong state][velocity ping-pong state]
     add_sources: [[BindGroup; 2]; 2],
@@ -171,8 +173,10 @@ fn setup(
 
     let mut dye = Image::new_target_texture(size.x, size.y, TextureFormat::Rgba16Float, None);
     dye.asset_usage = RenderAssetUsages::RENDER_WORLD;
-    dye.texture_descriptor.usage =
-        TextureUsages::COPY_SRC | TextureUsages::COPY_DST | TextureUsages::STORAGE_BINDING;
+    dye.texture_descriptor.usage = TextureUsages::COPY_SRC
+        | TextureUsages::COPY_DST
+        | TextureUsages::STORAGE_BINDING
+        | TextureUsages::TEXTURE_BINDING;
 
     let dye_original = images.add(dye.clone());
     let dye_current = images.add(dye.clone());
@@ -191,13 +195,15 @@ fn setup(
 
     let mut divergence = Image::new_target_texture(size.x, size.y, TextureFormat::R32Float, None);
     divergence.asset_usage = RenderAssetUsages::RENDER_WORLD;
-    divergence.texture_descriptor.usage = TextureUsages::STORAGE_BINDING;
+    divergence.texture_descriptor.usage =
+        TextureUsages::STORAGE_BINDING | TextureUsages::TEXTURE_BINDING;
 
     let divergence = images.add(divergence);
 
     let mut pressure = Image::new_target_texture(size.x, size.y, TextureFormat::R32Float, None);
     pressure.asset_usage = RenderAssetUsages::RENDER_WORLD;
-    pressure.texture_descriptor.usage = TextureUsages::STORAGE_BINDING;
+    pressure.texture_descriptor.usage =
+        TextureUsages::STORAGE_BINDING | TextureUsages::TEXTURE_BINDING;
 
     let pressure_current = images.add(pressure.clone());
     let pressure_next = images.add(pressure);
@@ -292,7 +298,10 @@ fn prepare_bind_groups(
         UniformBuffer::from(density_visualize_uniforms.into_inner());
     density_visualize_uniform_buffer.write_buffer(&render_device, &queue);
 
-    let init_layout = pipeline_cache.get_bind_group_layout(&pipeline.init_bind_group_layout);
+    let init_density_dye_layout =
+        pipeline_cache.get_bind_group_layout(&pipeline.init_density_dye_bind_group_layout);
+    let init_velocity_display_layout =
+        pipeline_cache.get_bind_group_layout(&pipeline.init_velocity_display_bind_group_layout);
     let add_sources_layout =
         pipeline_cache.get_bind_group_layout(&pipeline.add_sources_bind_group_layout);
     let density_diffuse_layout =
@@ -316,23 +325,21 @@ fn prepare_bind_groups(
     let density_visualize_layout =
         pipeline_cache.get_bind_group_layout(&pipeline.density_visualize_bind_group_layout);
 
-    // init.wgsl:
-    //   0 density_a (write)
-    //   1 density_b (write)
-    //   2 dye_a (write)
-    //   3 dye_b (write)
-    //   4 velocity_a (write)
-    //   5 velocity_b (write)
-    //   6 display (write)
-    //   7 config
-    let init = render_device.create_bind_group(
-        Some("fluid init bind group"),
-        &init_layout,
+    let init_density_dye = render_device.create_bind_group(
+        Some("fluid density/dye init bind group"),
+        &init_density_dye_layout,
         &BindGroupEntries::sequential((
             &density_a.texture_view,
             &density_b.texture_view,
             &dye_a.texture_view,
             &dye_b.texture_view,
+            &dimensions_uniform_buffer,
+        )),
+    );
+    let init_velocity_display = render_device.create_bind_group(
+        Some("fluid velocity/display init bind group"),
+        &init_velocity_display_layout,
+        &BindGroupEntries::sequential((
             &velocity_a.texture_view,
             &velocity_b.texture_view,
             &display.texture_view,
@@ -690,7 +697,8 @@ fn prepare_bind_groups(
     ];
 
     commands.insert_resource(FluidSimBindGroups {
-        init,
+        init_density_dye,
+        init_velocity_display,
         add_sources,
         density_diffuse,
         velocity_diffuse,
@@ -707,7 +715,8 @@ fn prepare_bind_groups(
 
 #[derive(Resource)]
 struct FluidSimPipeline {
-    init_bind_group_layout: BindGroupLayoutDescriptor,
+    init_density_dye_bind_group_layout: BindGroupLayoutDescriptor,
+    init_velocity_display_bind_group_layout: BindGroupLayoutDescriptor,
     add_sources_bind_group_layout: BindGroupLayoutDescriptor,
     density_diffuse_bind_group_layout: BindGroupLayoutDescriptor,
     velocity_diffuse_bind_group_layout: BindGroupLayoutDescriptor,
@@ -720,7 +729,8 @@ struct FluidSimPipeline {
     velocity_project_bind_group_layout: BindGroupLayoutDescriptor,
     density_visualize_bind_group_layout: BindGroupLayoutDescriptor,
 
-    init_pipeline: CachedComputePipelineId,
+    init_density_dye_pipeline: CachedComputePipelineId,
+    init_velocity_display_pipeline: CachedComputePipelineId,
     add_sources_pipeline: CachedComputePipelineId,
     density_diffuse_pipeline: CachedComputePipelineId,
     velocity_diffuse_pipeline: CachedComputePipelineId,
@@ -739,8 +749,8 @@ fn init_fluid_sim_pipeline(
     asset_server: Res<AssetServer>,
     pipeline_cache: Res<PipelineCache>,
 ) {
-    let init_bind_group_layout = BindGroupLayoutDescriptor::new(
-        "fluid init layout",
+    let init_density_dye_bind_group_layout = BindGroupLayoutDescriptor::new(
+        "fluid density/dye init layout",
         &BindGroupLayoutEntries::sequential(
             ShaderStages::COMPUTE,
             (
@@ -748,6 +758,15 @@ fn init_fluid_sim_pipeline(
                 texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::WriteOnly),
                 texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::WriteOnly),
                 texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::WriteOnly),
+                uniform_buffer::<DimensionsUniforms>(false),
+            ),
+        ),
+    );
+    let init_velocity_display_bind_group_layout = BindGroupLayoutDescriptor::new(
+        "fluid velocity/display init layout",
+        &BindGroupLayoutEntries::sequential(
+            ShaderStages::COMPUTE,
+            (
                 texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::WriteOnly),
                 texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::WriteOnly),
                 texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::WriteOnly),
@@ -761,9 +780,9 @@ fn init_fluid_sim_pipeline(
         &BindGroupLayoutEntries::sequential(
             ShaderStages::COMPUTE,
             (
-                texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::ReadOnly),
-                texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::ReadOnly),
-                texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::ReadOnly),
+                texture_2d(TextureSampleType::Float { filterable: false }),
+                texture_2d(TextureSampleType::Float { filterable: false }),
+                texture_2d(TextureSampleType::Float { filterable: false }),
                 texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::WriteOnly),
                 texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::WriteOnly),
                 texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::WriteOnly),
@@ -778,10 +797,10 @@ fn init_fluid_sim_pipeline(
         &BindGroupLayoutEntries::sequential(
             ShaderStages::COMPUTE,
             (
-                texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::ReadOnly),
-                texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::ReadOnly),
-                texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::ReadOnly),
-                texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::ReadOnly),
+                texture_2d(TextureSampleType::Float { filterable: false }),
+                texture_2d(TextureSampleType::Float { filterable: false }),
+                texture_2d(TextureSampleType::Float { filterable: false }),
+                texture_2d(TextureSampleType::Float { filterable: false }),
                 texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::WriteOnly),
                 texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::WriteOnly),
                 uniform_buffer::<DensityDiffuseUniforms>(false),
@@ -794,8 +813,8 @@ fn init_fluid_sim_pipeline(
         &BindGroupLayoutEntries::sequential(
             ShaderStages::COMPUTE,
             (
-                texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::ReadOnly),
-                texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::ReadOnly),
+                texture_2d(TextureSampleType::Float { filterable: false }),
+                texture_2d(TextureSampleType::Float { filterable: false }),
                 texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::WriteOnly),
                 uniform_buffer::<VelocityDiffuseUniforms>(false),
             ),
@@ -807,7 +826,7 @@ fn init_fluid_sim_pipeline(
         &BindGroupLayoutEntries::sequential(
             ShaderStages::COMPUTE,
             (
-                texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::ReadOnly),
+                texture_2d(TextureSampleType::Float { filterable: false }),
                 texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::WriteOnly),
                 uniform_buffer::<AdvectionUniforms>(false),
             ),
@@ -819,9 +838,9 @@ fn init_fluid_sim_pipeline(
         &BindGroupLayoutEntries::sequential(
             ShaderStages::COMPUTE,
             (
-                texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::ReadOnly),
-                texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::ReadOnly),
-                texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::ReadOnly),
+                texture_2d(TextureSampleType::Float { filterable: false }),
+                texture_2d(TextureSampleType::Float { filterable: false }),
+                texture_2d(TextureSampleType::Float { filterable: false }),
                 texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::WriteOnly),
                 texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::WriteOnly),
                 uniform_buffer::<AdvectionUniforms>(false),
@@ -834,7 +853,7 @@ fn init_fluid_sim_pipeline(
         &BindGroupLayoutEntries::sequential(
             ShaderStages::COMPUTE,
             (
-                texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::ReadOnly),
+                texture_2d(TextureSampleType::Float { filterable: false }),
                 texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::WriteOnly),
                 uniform_buffer::<DimensionsUniforms>(false),
             ),
@@ -846,7 +865,7 @@ fn init_fluid_sim_pipeline(
         &BindGroupLayoutEntries::sequential(
             ShaderStages::COMPUTE,
             (
-                texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::ReadOnly),
+                texture_2d(TextureSampleType::Float { filterable: false }),
                 texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::WriteOnly),
                 uniform_buffer::<DimensionsUniforms>(false),
             ),
@@ -869,8 +888,8 @@ fn init_fluid_sim_pipeline(
         &BindGroupLayoutEntries::sequential(
             ShaderStages::COMPUTE,
             (
-                texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::ReadOnly),
-                texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::ReadOnly),
+                texture_2d(TextureSampleType::Float { filterable: false }),
+                texture_2d(TextureSampleType::Float { filterable: false }),
                 texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::WriteOnly),
                 uniform_buffer::<DimensionsUniforms>(false),
             ),
@@ -882,8 +901,8 @@ fn init_fluid_sim_pipeline(
         &BindGroupLayoutEntries::sequential(
             ShaderStages::COMPUTE,
             (
-                texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::ReadOnly),
-                texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::ReadOnly),
+                texture_2d(TextureSampleType::Float { filterable: false }),
+                texture_2d(TextureSampleType::Float { filterable: false }),
                 texture_storage_2d(TextureFormat::Rg32Float, StorageTextureAccess::WriteOnly),
                 uniform_buffer::<DimensionsUniforms>(false),
             ),
@@ -895,8 +914,8 @@ fn init_fluid_sim_pipeline(
         &BindGroupLayoutEntries::sequential(
             ShaderStages::COMPUTE,
             (
-                texture_storage_2d(TextureFormat::R32Float, StorageTextureAccess::ReadOnly),
-                texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::ReadOnly),
+                texture_2d(TextureSampleType::Float { filterable: false }),
+                texture_2d(TextureSampleType::Float { filterable: false }),
                 texture_storage_2d(TextureFormat::Rgba16Float, StorageTextureAccess::WriteOnly),
                 uniform_buffer::<DensityVisualizeUniforms>(false),
             ),
@@ -916,12 +935,20 @@ fn init_fluid_sim_pipeline(
     let velocity_project_shader = asset_server.load(VELOCITY_PROJECT_SHADER);
     let density_visualize_shader = asset_server.load(DENSITY_VISUALIZE_SHADER);
 
-    let init_pipeline = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
-        layout: vec![init_bind_group_layout.clone()],
-        shader: init_shader,
-        entry_point: Some(Cow::Borrowed("main")),
-        ..default()
-    });
+    let init_density_dye_pipeline =
+        pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
+            layout: vec![init_density_dye_bind_group_layout.clone()],
+            shader: init_shader,
+            entry_point: Some(Cow::Borrowed("init_density_dye")),
+            ..default()
+        });
+    let init_velocity_display_pipeline =
+        pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
+            layout: vec![init_velocity_display_bind_group_layout.clone()],
+            shader: asset_server.load(INIT_VELOCITY_SHADER),
+            entry_point: Some(Cow::Borrowed("main")),
+            ..default()
+        });
 
     let add_sources_pipeline = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
         layout: vec![add_sources_bind_group_layout.clone()],
@@ -1011,7 +1038,8 @@ fn init_fluid_sim_pipeline(
         });
 
     commands.insert_resource(FluidSimPipeline {
-        init_bind_group_layout,
+        init_density_dye_bind_group_layout,
+        init_velocity_display_bind_group_layout,
         add_sources_bind_group_layout,
         density_diffuse_bind_group_layout,
         velocity_diffuse_bind_group_layout,
@@ -1023,7 +1051,8 @@ fn init_fluid_sim_pipeline(
         pressure_solve_bind_group_layout,
         velocity_project_bind_group_layout,
         density_visualize_bind_group_layout,
-        init_pipeline,
+        init_density_dye_pipeline,
+        init_velocity_display_pipeline,
         add_sources_pipeline,
         density_diffuse_pipeline,
         velocity_diffuse_pipeline,
@@ -1060,9 +1089,11 @@ fn update_pipeline_state(
 ) {
     match *state {
         FluidSimState::Loading => {
-            match pipeline_cache.get_compute_pipeline_state(pipeline.init_pipeline) {
+            match pipeline_cache.get_compute_pipeline_state(pipeline.init_density_dye_pipeline) {
                 CachedPipelineState::Ok(_) => {
-                    *state = FluidSimState::Init;
+                    if pipeline_ready(&pipeline_cache, pipeline.init_velocity_display_pipeline) {
+                        *state = FluidSimState::Init;
+                    }
                 }
                 CachedPipelineState::Err(ShaderCacheError::ShaderNotLoaded(_)) => {}
                 CachedPipelineState::Err(err) => {
@@ -1110,39 +1141,24 @@ fn fluid_simulation(
         FluidSimState::Loading => {}
 
         FluidSimState::Init => {
-            let init_pipeline = pipeline_cache
-                .get_compute_pipeline(pipeline.init_pipeline)
-                .unwrap();
-
-            let mut pass = render_context
-                .command_encoder()
-                .begin_compute_pass(&ComputePassDescriptor::default());
-
-            pass.set_pipeline(init_pipeline);
-            pass.set_bind_group(0, &bind_groups.init, &[]);
-            pass.dispatch_workgroups(
-                size.x.div_ceil(WORKGROUP_SIZE),
-                size.y.div_ceil(WORKGROUP_SIZE),
-                1,
+            initialize_simulation(
+                size,
+                &pipeline_cache,
+                &pipeline,
+                &bind_groups,
+                &mut render_context,
             );
             buffers.reset_generation = reset.generation;
         }
 
         FluidSimState::Update => {
             if buffers.reset_generation != reset.generation {
-                let init_pipeline = pipeline_cache
-                    .get_compute_pipeline(pipeline.init_pipeline)
-                    .unwrap();
-                let mut pass = render_context
-                    .command_encoder()
-                    .begin_compute_pass(&ComputePassDescriptor::default());
-
-                pass.set_pipeline(init_pipeline);
-                pass.set_bind_group(0, &bind_groups.init, &[]);
-                pass.dispatch_workgroups(
-                    size.x.div_ceil(WORKGROUP_SIZE),
-                    size.y.div_ceil(WORKGROUP_SIZE),
-                    1,
+                initialize_simulation(
+                    size,
+                    &pipeline_cache,
+                    &pipeline,
+                    &bind_groups,
+                    &mut render_context,
                 );
 
                 *buffers = FluidSimBuffers {
@@ -1235,6 +1251,38 @@ fn fluid_simulation(
                 &bind_groups,
             );
         }
+    }
+}
+
+fn initialize_simulation(
+    size: UVec2,
+    pipeline_cache: &PipelineCache,
+    pipeline: &FluidSimPipeline,
+    bind_groups: &FluidSimBindGroups,
+    render_context: &mut RenderContext,
+) {
+    let pipelines_and_groups = [
+        (
+            pipeline.init_density_dye_pipeline,
+            &bind_groups.init_density_dye,
+        ),
+        (
+            pipeline.init_velocity_display_pipeline,
+            &bind_groups.init_velocity_display,
+        ),
+    ];
+
+    for (pipeline_id, bind_group) in pipelines_and_groups {
+        let mut pass = render_context
+            .command_encoder()
+            .begin_compute_pass(&ComputePassDescriptor::default());
+        pass.set_pipeline(pipeline_cache.get_compute_pipeline(pipeline_id).unwrap());
+        pass.set_bind_group(0, bind_group, &[]);
+        pass.dispatch_workgroups(
+            size.x.div_ceil(WORKGROUP_SIZE),
+            size.y.div_ceil(WORKGROUP_SIZE),
+            1,
+        );
     }
 }
 

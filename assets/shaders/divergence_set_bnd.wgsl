@@ -3,7 +3,7 @@ struct DimensionsUniforms {
 };
 
 @group(0) @binding(0)
-var velocity_in: texture_storage_2d<rg32float, read>;
+var velocity_in: texture_2d<f32>;
 
 @group(0) @binding(1)
 var divergence: texture_storage_2d<r32float, write>;
@@ -12,7 +12,7 @@ var divergence: texture_storage_2d<r32float, write>;
 var<uniform> config: DimensionsUniforms;
 
 fn velocity_at(p: vec2<i32>) -> vec2<f32> {
-    return textureLoad(velocity_in, p).rg;
+    return textureLoad(velocity_in, p, 0).rg;
 }
 
 fn divergence_at_interior(p: vec2<i32>) -> f32 {

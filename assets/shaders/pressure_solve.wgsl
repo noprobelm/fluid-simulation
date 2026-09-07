@@ -3,10 +3,10 @@ struct DimensionsUniforms {
 };
 
 @group(0) @binding(0)
-var divergence: texture_storage_2d<r32float, read>;
+var divergence: texture_2d<f32>;
 
 @group(0) @binding(1)
-var pressure_in: texture_storage_2d<r32float, read>;
+var pressure_in: texture_2d<f32>;
 
 @group(0) @binding(2)
 var pressure_out: texture_storage_2d<r32float, write>;
@@ -15,11 +15,11 @@ var pressure_out: texture_storage_2d<r32float, write>;
 var<uniform> config: DimensionsUniforms;
 
 fn divergence_at(p: vec2<i32>) -> f32 {
-    return textureLoad(divergence, p).r;
+    return textureLoad(divergence, p, 0).r;
 }
 
 fn pressure_at(p: vec2<i32>) -> f32 {
-    return textureLoad(pressure_in, p).r;
+    return textureLoad(pressure_in, p, 0).r;
 }
 
 fn solve_pressure_at(p: vec2<i32>) -> f32 {
@@ -85,4 +85,3 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         vec4<f32>(pressure, 0.0, 0.0, 0.0),
     );
 }
-

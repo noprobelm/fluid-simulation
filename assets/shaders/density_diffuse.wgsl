@@ -5,16 +5,16 @@ struct DensityDiffuseUniforms {
 };
 
 @group(0) @binding(0)
-var density_original: texture_storage_2d<r32float, read>;
+var density_original: texture_2d<f32>;
 
 @group(0) @binding(1)
-var dye_original: texture_storage_2d<rgba16float, read>;
+var dye_original: texture_2d<f32>;
 
 @group(0) @binding(2)
-var density_in: texture_storage_2d<r32float, read>;
+var density_in: texture_2d<f32>;
 
 @group(0) @binding(3)
-var dye_in: texture_storage_2d<rgba16float, read>;
+var dye_in: texture_2d<f32>;
 
 @group(0) @binding(4)
 var density_out: texture_storage_2d<r32float, write>;
@@ -26,19 +26,19 @@ var dye_out: texture_storage_2d<rgba16float, write>;
 var<uniform> config: DensityDiffuseUniforms;
 
 fn density_at(p: vec2<i32>) -> f32 {
-    return textureLoad(density_in, p).r;
+    return textureLoad(density_in, p, 0).r;
 }
 
 fn source_at(p: vec2<i32>) -> f32 {
-    return textureLoad(density_original, p).r;
+    return textureLoad(density_original, p, 0).r;
 }
 
 fn dye_at(p: vec2<i32>) -> vec3<f32> {
-    return textureLoad(dye_in, p).rgb;
+    return textureLoad(dye_in, p, 0).rgb;
 }
 
 fn dye_source_at(p: vec2<i32>) -> vec3<f32> {
-    return textureLoad(dye_original, p).rgb;
+    return textureLoad(dye_original, p, 0).rgb;
 }
 
 fn diffuse_density_at(p: vec2<i32>) -> f32 {

@@ -4,13 +4,13 @@ struct AdvectionUniforms {
 };
 
 @group(0) @binding(0)
-var density_in: texture_storage_2d<r32float, read>;
+var density_in: texture_2d<f32>;
 
 @group(0) @binding(1)
-var dye_in: texture_storage_2d<rgba16float, read>;
+var dye_in: texture_2d<f32>;
 
 @group(0) @binding(2)
-var velocity_in: texture_storage_2d<rg32float, read>;
+var velocity_in: texture_2d<f32>;
 
 @group(0) @binding(3)
 var density_out: texture_storage_2d<r32float, write>;
@@ -22,15 +22,15 @@ var dye_out: texture_storage_2d<rgba16float, write>;
 var<uniform> config: AdvectionUniforms;
 
 fn density_at(p: vec2<i32>) -> f32 {
-    return textureLoad(density_in, p).r;
+    return textureLoad(density_in, p, 0).r;
 }
 
 fn dye_at(p: vec2<i32>) -> vec3<f32> {
-    return textureLoad(dye_in, p).rgb;
+    return textureLoad(dye_in, p, 0).rgb;
 }
 
 fn velocity_at(p: vec2<i32>) -> vec2<f32> {
-    return textureLoad(velocity_in, p).rg;
+    return textureLoad(velocity_in, p, 0).rg;
 }
 
 fn backtrace_position(p: vec2<i32>) -> vec2<f32> {

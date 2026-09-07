@@ -4,10 +4,10 @@ struct DensityVisualizeUniforms {
 }
 
 @group(0) @binding(0)
-var density: texture_storage_2d<r32float, read>;
+var density: texture_2d<f32>;
 
 @group(0) @binding(1)
-var dye: texture_storage_2d<rgba16float, read>;
+var dye: texture_2d<f32>;
 
 @group(0) @binding(2)
 var display: texture_storage_2d<rgba16float, write>;
@@ -16,9 +16,9 @@ var display: texture_storage_2d<rgba16float, write>;
 var<uniform> config: DensityVisualizeUniforms;
 
 fn fluid_color(p: vec2<i32>) -> vec3<f32> {
-    let value = max(textureLoad(density, p).r, 0.0);
+    let value = max(textureLoad(density, p, 0).r, 0.0);
     let intensity = 1.0 - exp(-max(value, 0.0) * config.fluid_intensity_scale);
-    let pigment = textureLoad(dye, p).rgb;
+    let pigment = textureLoad(dye, p, 0).rgb;
     let tint = pigment / max(value, 0.0001);
     return tint * intensity;
 }

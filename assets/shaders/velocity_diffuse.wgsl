@@ -5,10 +5,10 @@ struct VelocityDiffuseUniforms {
 };
 
 @group(0) @binding(0)
-var velocity_original: texture_storage_2d<rg32float, read>;
+var velocity_original: texture_2d<f32>;
 
 @group(0) @binding(1)
-var velocity_in: texture_storage_2d<rg32float, read>;
+var velocity_in: texture_2d<f32>;
 
 @group(0) @binding(2)
 var velocity_out: texture_storage_2d<rg32float, write>;
@@ -17,7 +17,7 @@ var velocity_out: texture_storage_2d<rg32float, write>;
 var<uniform> config: VelocityDiffuseUniforms;
 
 fn velocity_at(p: vec2<i32>) -> vec2<f32> {
-    return textureLoad(velocity_in, p).rg;
+    return textureLoad(velocity_in, p, 0).rg;
 }
 
 @compute
@@ -75,7 +75,7 @@ if (p.y == height - 1) {
     let n = max(config.dimensions - vec2<f32>(2.0), vec2<f32>(1.0));
     let a = config.dt * config.visc * n * n;
 
-    let source = textureLoad(velocity_original, p).rg;
+    let source = textureLoad(velocity_original, p, 0).rg;
     let left = velocity_at(p + vec2<i32>(-1, 0));
     let right = velocity_at(p + vec2<i32>(1, 0));
     let down = velocity_at(p + vec2<i32>(0, -1));
