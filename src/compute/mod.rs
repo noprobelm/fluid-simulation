@@ -18,7 +18,7 @@ use bevy::{
         texture::GpuImage,
     },
     shader::ShaderCacheError,
-    window::PrimaryWindow,
+    window::{PrimaryWindow, WindowResized},
 };
 use std::borrow::Cow;
 
@@ -54,6 +54,7 @@ impl Plugin for ComputePlugin {
         app.init_resource::<DisplayFactor>()
             .init_resource::<Iterations>()
             .add_systems(Startup, setup)
+            .add_systems(Update, resize_simulation)
             .add_plugins((
                 signals::SignalsPlugin,
                 uniforms::UniformsPlugin,
@@ -124,6 +125,9 @@ struct FluidSimImages {
     display: Handle<Image>,
 }
 
+#[derive(Component)]
+struct FluidDisplay;
+
 #[derive(Resource)]
 struct FluidSimBindGroups {
     init_density_dye: BindGroup,
@@ -158,8 +162,32 @@ fn setup(
     display_factor: Res<DisplayFactor>,
 ) -> Result {
     let window = windows.single()?;
-    let size = window.resolution.size().as_uvec2() / display_factor.0;
+    let size = simulation_size(window, *display_factor);
+    let fluid_sim_images = create_fluid_sim_images(&mut images, size);
+    let display = fluid_sim_images.display.clone();
 
+    commands.insert_resource(fluid_sim_images);
+
+    commands.spawn((
+        FluidDisplay,
+        Sprite {
+            image: display,
+            custom_size: Some(size.as_vec2()),
+            ..default()
+        },
+        Transform::from_scale(Vec3::splat(display_factor.0 as f32)),
+    ));
+
+    commands.spawn(Camera2d);
+
+    Ok(())
+}
+
+fn simulation_size(window: &Window, display_factor: DisplayFactor) -> UVec2 {
+    (window.resolution.size().as_uvec2() / display_factor.0.max(1)).max(UVec2::ONE)
+}
+
+fn create_fluid_sim_images(images: &mut Assets<Image>, size: UVec2) -> FluidSimImages {
     let mut density = Image::new_target_texture(size.x, size.y, TextureFormat::R32Float, None);
     density.asset_usage = RenderAssetUsages::RENDER_WORLD;
     density.texture_descriptor.usage = TextureUsages::COPY_SRC
@@ -214,10 +242,10 @@ fn setup(
         TextureUsages::STORAGE_BINDING | TextureUsages::TEXTURE_BINDING;
     let display = images.add(display);
 
-    commands.insert_resource(FluidSimImages {
+    FluidSimImages {
         density_original,
-        density_current: density_current.clone(),
-        density_next: density_next.clone(),
+        density_current,
+        density_next,
         dye_original,
         dye_current,
         dye_next,
@@ -227,21 +255,46 @@ fn setup(
         divergence,
         pressure_current,
         pressure_next,
-        display: display.clone(),
+        display,
+    }
+}
+
+fn resize_simulation(
+    mut ev_window_resized: MessageReader<WindowResized>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    display_factor: Res<DisplayFactor>,
+    mut images: ResMut<Assets<Image>>,
+    mut fluid_sim_images: ResMut<FluidSimImages>,
+    mut display: Single<(&mut Sprite, &mut Transform), With<FluidDisplay>>,
+    mut dimensions: ResMut<DimensionsUniforms>,
+    mut add_sources: ResMut<AddSourcesUniforms>,
+    mut advection: ResMut<AdvectionUniforms>,
+    mut density_diffuse: ResMut<DensityDiffuseUniforms>,
+    mut velocity_diffuse: ResMut<VelocityDiffuseUniforms>,
+    mut reset: ResMut<ResetSimulation>,
+) {
+    ev_window_resized.read().for_each(|ev| {
+        let entity = ev.window;
+        let Ok(window) = windows.get(entity) else {
+            return;
+        };
+        let size = simulation_size(window, *display_factor);
+
+        let resized_images = create_fluid_sim_images(&mut images, size);
+        let (sprite, transform) = &mut *display;
+        sprite.image = resized_images.display.clone();
+        sprite.custom_size = Some(size.as_vec2());
+        transform.scale = Vec3::splat(display_factor.0 as f32);
+        *fluid_sim_images = resized_images;
+
+        let dimensions_vec = size.as_vec2();
+        dimensions.dimensions = dimensions_vec;
+        add_sources.dimensions = dimensions_vec;
+        advection.dimensions = dimensions_vec;
+        density_diffuse.dimensions = dimensions_vec;
+        velocity_diffuse.dimensions = dimensions_vec;
+        reset.generation = reset.generation.wrapping_add(1);
     });
-
-    commands.spawn((
-        Sprite {
-            image: display,
-            custom_size: Some(size.as_vec2()),
-            ..default()
-        },
-        Transform::from_scale(Vec3::splat(display_factor.0 as f32)),
-    ));
-
-    commands.spawn(Camera2d);
-
-    Ok(())
 }
 
 fn prepare_bind_groups(

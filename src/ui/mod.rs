@@ -6,7 +6,9 @@ use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 use signals::*;
 pub use states::*;
 
-use crate::compute::{AddSourcesUniforms, DensityVisualizeUniforms, Iterations, ResetSimulation};
+use crate::compute::{
+    AddSourcesUniforms, DensityVisualizeUniforms, DisplayFactor, Iterations, ResetSimulation,
+};
 
 pub(super) struct UiPlugin;
 
@@ -29,6 +31,7 @@ fn show(
     mut sources: ResMut<AddSourcesUniforms>,
     mut vis: ResMut<DensityVisualizeUniforms>,
     mut iterations: ResMut<Iterations>,
+    mut display_factor: ResMut<DisplayFactor>,
     mut reset: ResMut<ResetSimulation>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?;
@@ -69,6 +72,15 @@ fn show(
                         .num_columns(2)
                         .spacing(egui::vec2(40.0, ui.spacing().item_spacing.y))
                         .show(ui, |ui| show_simulation_controls(ui, &mut iterations));
+                });
+
+            egui::CollapsingHeader::new("Resolution")
+                .default_open(false)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Display Factor");
+                        ui.add(egui::Slider::new(&mut display_factor.0, 1..=8));
+                    });
                 });
         });
     Ok(())
