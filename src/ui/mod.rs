@@ -7,7 +7,8 @@ use signals::*;
 pub use states::*;
 
 use crate::compute::{
-    AddSourcesUniforms, DensityVisualizeUniforms, DisplayFactor, Iterations, ResetSimulation,
+    AddSourcesUniforms, DensityDiffuseUniforms, DensityVisualizeUniforms, DisplayFactor,
+    Iterations, ResetSimulation,
 };
 
 pub(super) struct UiPlugin;
@@ -30,6 +31,7 @@ fn show(
     mut contexts: EguiContexts,
     mut sources: ResMut<AddSourcesUniforms>,
     mut vis: ResMut<DensityVisualizeUniforms>,
+    mut density: ResMut<DensityDiffuseUniforms>,
     mut iterations: ResMut<Iterations>,
     mut display_factor: ResMut<DisplayFactor>,
     mut reset: ResMut<ResetSimulation>,
@@ -65,13 +67,24 @@ fn show(
                         .show(ui, |ui| show_vis(ui, &mut vis));
                 });
 
+            egui::CollapsingHeader::new("Diffusion")
+                .default_open(false)
+                .show(ui, |ui| {
+                    egui::Grid::new("diffusion_grid")
+                        .num_columns(2)
+                        .spacing(egui::vec2(40.0, ui.spacing().item_spacing.y))
+                        .show(ui, |ui| {
+                            show_diffusion_controls(ui, &mut iterations, &mut density)
+                        });
+                });
+
             egui::CollapsingHeader::new("Iterations")
                 .default_open(false)
                 .show(ui, |ui| {
                     egui::Grid::new("iterations_grid")
                         .num_columns(2)
                         .spacing(egui::vec2(40.0, ui.spacing().item_spacing.y))
-                        .show(ui, |ui| show_simulation_controls(ui, &mut iterations));
+                        .show(ui, |ui| show_pressure_controls(ui, &mut iterations));
                 });
 
             let mut original = display_factor.0;
@@ -120,16 +133,30 @@ fn show_vis(ui: &mut egui::Ui, vis: &mut ResMut<DensityVisualizeUniforms>) {
     ui.end_row();
 }
 
-fn show_simulation_controls(ui: &mut egui::Ui, iterations: &mut ResMut<Iterations>) {
+fn show_pressure_controls(ui: &mut egui::Ui, iterations: &mut ResMut<Iterations>) {
+    ui.label("Pressure Solve Iterations");
+    ui.add(egui::Slider::new(&mut iterations.pressure_solve, 1..=20).step_by(0.1));
+    ui.end_row();
+}
+
+fn show_diffusion_controls(
+    ui: &mut egui::Ui,
+    iterations: &mut ResMut<Iterations>,
+    density: &mut ResMut<DensityDiffuseUniforms>,
+) {
+    ui.label("Mass Diffusion Coefficient");
+    ui.add(
+        egui::Slider::new(&mut density.diff, 1.0e-9..=1.0e-3)
+            .logarithmic(true)
+            .custom_formatter(|value, _| format!("{value:.1e}")),
+    );
+    ui.end_row();
+
     ui.label("Density Diffusion Iterations");
     ui.add(egui::Slider::new(&mut iterations.density_diffusion, 1..=20).step_by(0.1));
     ui.end_row();
 
     ui.label("Velocity Diffusion Iterations");
     ui.add(egui::Slider::new(&mut iterations.velocity_diffusion, 1..=20).step_by(0.1));
-    ui.end_row();
-
-    ui.label("Pressure Solve Iterations");
-    ui.add(egui::Slider::new(&mut iterations.pressure_solve, 1..=20).step_by(0.1));
     ui.end_row();
 }

@@ -9,7 +9,7 @@ use bevy::{
     prelude::*,
     render::{
         Render, RenderApp, RenderStartup, RenderSystems,
-        extract_resource::{ExtractResource, ExtractResourcePlugin},
+        extract_resource::ExtractResourcePlugin,
         render_asset::RenderAssets,
         render_resource::{
             binding_types::{texture_2d, texture_storage_2d, uniform_buffer},
@@ -25,7 +25,7 @@ use std::borrow::Cow;
 
 pub use crate::compute::uniforms::{AddSourcesUniforms, DensityVisualizeUniforms};
 
-use self::uniforms::{
+pub use self::uniforms::{
     AdvectionUniforms, DensityDiffuseUniforms, DimensionsUniforms, VelocityDiffuseUniforms,
 };
 
@@ -77,84 +77,8 @@ impl Plugin for ComputePlugin {
     }
 }
 
-#[derive(Copy, Clone, Default)]
-enum PingPong {
-    #[default]
-    A,
-    B,
-}
-
-impl PingPong {
-    fn index(self) -> usize {
-        match self {
-            Self::A => 0,
-            Self::B => 1,
-        }
-    }
-
-    fn swap(&mut self) {
-        *self = match self {
-            Self::A => Self::B,
-            Self::B => Self::A,
-        };
-    }
-}
-
-#[derive(Clone, Resource, Default)]
-struct FluidSimBuffers {
-    density: PingPong,
-    dye: PingPong,
-    velocity: PingPong,
-    pressure: PingPong,
-    reset_generation: u64,
-}
-
-#[derive(Resource, Clone, ExtractResource)]
-struct FluidSimImages {
-    density_original: Handle<Image>,
-    density_current: Handle<Image>,
-    density_next: Handle<Image>,
-    dye_original: Handle<Image>,
-    dye_current: Handle<Image>,
-    dye_next: Handle<Image>,
-    velocity_original: Handle<Image>,
-    velocity_current: Handle<Image>,
-    velocity_next: Handle<Image>,
-    divergence: Handle<Image>,
-    pressure_current: Handle<Image>,
-    pressure_next: Handle<Image>,
-    display: Handle<Image>,
-}
-
 #[derive(Component)]
 struct FluidDisplay;
-
-#[derive(Resource)]
-struct FluidSimBindGroups {
-    init_density_dye: BindGroup,
-    init_velocity_display: BindGroup,
-
-    // [density ping-pong state][velocity ping-pong state]
-    add_sources: [[BindGroup; 2]; 2],
-    density_diffuse: [BindGroup; 2],
-    velocity_diffuse: [BindGroup; 2],
-    velocity_advect: [BindGroup; 2],
-
-    // [density ping-pong state][velocity ping-pong state]
-    density_advect: [[BindGroup; 2]; 2],
-
-    compute_divergence: [BindGroup; 2],
-    divergence_set_bnd: [BindGroup; 2],
-
-    // [pressure ping-pong state]
-    pressure_clear: [BindGroup; 2],
-    pressure_solve: [BindGroup; 2],
-
-    // [velocity ping-pong state][pressure ping-pong state]
-    velocity_project: [[BindGroup; 2]; 2],
-
-    density_visualize: [BindGroup; 2],
-}
 
 fn setup(
     mut commands: Commands,
@@ -770,37 +694,6 @@ fn prepare_bind_groups(
     });
 }
 
-#[derive(Resource)]
-struct FluidSimPipeline {
-    init_density_dye_bind_group_layout: BindGroupLayoutDescriptor,
-    init_velocity_display_bind_group_layout: BindGroupLayoutDescriptor,
-    add_sources_bind_group_layout: BindGroupLayoutDescriptor,
-    density_diffuse_bind_group_layout: BindGroupLayoutDescriptor,
-    velocity_diffuse_bind_group_layout: BindGroupLayoutDescriptor,
-    velocity_advect_bind_group_layout: BindGroupLayoutDescriptor,
-    density_advect_bind_group_layout: BindGroupLayoutDescriptor,
-    compute_divergence_bind_group_layout: BindGroupLayoutDescriptor,
-    divergence_set_bnd_bind_group_layout: BindGroupLayoutDescriptor,
-    pressure_clear_bind_group_layout: BindGroupLayoutDescriptor,
-    pressure_solve_bind_group_layout: BindGroupLayoutDescriptor,
-    velocity_project_bind_group_layout: BindGroupLayoutDescriptor,
-    density_visualize_bind_group_layout: BindGroupLayoutDescriptor,
-
-    init_density_dye_pipeline: CachedComputePipelineId,
-    init_velocity_display_pipeline: CachedComputePipelineId,
-    add_sources_pipeline: CachedComputePipelineId,
-    density_diffuse_pipeline: CachedComputePipelineId,
-    velocity_diffuse_pipeline: CachedComputePipelineId,
-    velocity_advect_pipeline: CachedComputePipelineId,
-    density_advect_pipeline: CachedComputePipelineId,
-    compute_divergence_pipeline: CachedComputePipelineId,
-    divergence_set_bnd_pipeline: CachedComputePipelineId,
-    pressure_clear_pipeline: CachedComputePipelineId,
-    pressure_solve_pipeline: CachedComputePipelineId,
-    velocity_project_pipeline: CachedComputePipelineId,
-    density_visualize_pipeline: CachedComputePipelineId,
-}
-
 fn init_fluid_sim_pipeline(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
@@ -1122,14 +1015,6 @@ fn init_fluid_sim_pipeline(
         velocity_project_pipeline,
         density_visualize_pipeline,
     });
-}
-
-#[derive(Resource, Default)]
-enum FluidSimState {
-    #[default]
-    Loading,
-    Init,
-    Update,
 }
 
 fn pipeline_ready(pipeline_cache: &PipelineCache, id: CachedComputePipelineId) -> bool {
