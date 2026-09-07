@@ -5,6 +5,7 @@ mod uniforms;
 use bevy::{
     asset::RenderAssetUsages,
     core_pipeline::schedule::camera_driver,
+    image::ImageSampler,
     prelude::*,
     render::{
         Render, RenderApp, RenderStartup, RenderSystems,
@@ -240,6 +241,7 @@ fn create_fluid_sim_images(images: &mut Assets<Image>, size: UVec2) -> FluidSimI
     display.asset_usage = RenderAssetUsages::RENDER_WORLD;
     display.texture_descriptor.usage =
         TextureUsages::STORAGE_BINDING | TextureUsages::TEXTURE_BINDING;
+    display.sampler = ImageSampler::linear();
     let display = images.add(display);
 
     FluidSimImages {
