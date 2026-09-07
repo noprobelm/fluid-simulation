@@ -8,7 +8,7 @@ pub use states::*;
 
 use crate::compute::{
     AddSourcesUniforms, DensityDiffuseUniforms, DensityVisualizeUniforms, DisplayFactor,
-    Iterations, ResetSimulation,
+    Iterations, ResetSimulation, VelocityDiffuseUniforms,
 };
 
 pub(super) struct UiPlugin;
@@ -32,6 +32,7 @@ fn show(
     mut sources: ResMut<AddSourcesUniforms>,
     mut vis: ResMut<DensityVisualizeUniforms>,
     mut density: ResMut<DensityDiffuseUniforms>,
+    mut velocity: ResMut<VelocityDiffuseUniforms>,
     mut iterations: ResMut<Iterations>,
     mut display_factor: ResMut<DisplayFactor>,
     mut reset: ResMut<ResetSimulation>,
@@ -49,15 +50,6 @@ fn show(
                 }
             });
 
-            egui::CollapsingHeader::new("Sources")
-                .default_open(true)
-                .show(ui, |ui| {
-                    egui::Grid::new("sources_grid")
-                        .num_columns(2)
-                        .spacing(egui::vec2(40.0, ui.spacing().item_spacing.y))
-                        .show(ui, |ui| show_source_controls(ui, &mut sources));
-                });
-
             egui::CollapsingHeader::new("Visuals")
                 .default_open(true)
                 .show(ui, |ui| {
@@ -65,6 +57,15 @@ fn show(
                         .num_columns(2)
                         .spacing(egui::vec2(40.0, ui.spacing().item_spacing.y))
                         .show(ui, |ui| show_vis(ui, &mut vis));
+                });
+
+            egui::CollapsingHeader::new("Sources")
+                .default_open(true)
+                .show(ui, |ui| {
+                    egui::Grid::new("sources_grid")
+                        .num_columns(2)
+                        .spacing(egui::vec2(40.0, ui.spacing().item_spacing.y))
+                        .show(ui, |ui| show_source_controls(ui, &mut sources));
                 });
 
             egui::CollapsingHeader::new("Diffusion")
@@ -76,6 +77,15 @@ fn show(
                         .show(ui, |ui| {
                             show_diffusion_controls(ui, &mut iterations, &mut density)
                         });
+                });
+
+            egui::CollapsingHeader::new("Velocity")
+                .default_open(false)
+                .show(ui, |ui| {
+                    egui::Grid::new("velocity_grid")
+                        .num_columns(2)
+                        .spacing(egui::vec2(40.0, ui.spacing().item_spacing.y))
+                        .show(ui, |ui| show_velocity_controls(ui, &mut velocity));
                 });
 
             egui::CollapsingHeader::new("Iterations")
@@ -158,5 +168,15 @@ fn show_diffusion_controls(
 
     ui.label("Velocity Diffusion Iterations");
     ui.add(egui::Slider::new(&mut iterations.velocity_diffusion, 1..=20).step_by(0.1));
+    ui.end_row();
+}
+
+fn show_velocity_controls(ui: &mut egui::Ui, velocity: &mut ResMut<VelocityDiffuseUniforms>) {
+    ui.label("Kinematic Velocity");
+    ui.add(
+        egui::Slider::new(&mut velocity.visc, 1.0e-9..=1.0e-3)
+            .logarithmic(true)
+            .custom_formatter(|value, _| format!("{value:.1e}")),
+    );
     ui.end_row();
 }
